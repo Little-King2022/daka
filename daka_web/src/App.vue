@@ -1,29 +1,99 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, h } from 'vue';
 import { Toast } from 'tdesign-mobile-vue';
 import axios from 'axios';
-import { h } from 'vue';
-import { IconFont } from 'tdesign-icons-vue-next';
-import { CloseIcon, CheckIcon } from 'tdesign-icons-vue-next';
+import md5 from './utils/md5';
+import { IconFont, CloseIcon, CheckIcon } from 'tdesign-icons-vue-next';
+
+const API_BASE = 'https://api.hikiot.com';
+const FIXED_SIGN_SALT = 'WE1mfER7artAoJEwXKaCjw==';
+const DEFAULT_DAKA_CONFIG = {
+  message: 'success',
+  location: '南京农业大学(滨江校区)农学院',
+  address: '江苏省南京市浦口区江浦街道',
+  longitude: 118.636838,
+  latitude: 32.011898,
+  wifi: 'NJAU',
+  device_name: '微信小程序',
+  wifi_mac: '58:ae:a8:32:59:90',
+};
 
 const icons = [h(CheckIcon, { size: '20px' }), h(CloseIcon, { size: '20px' })];
 
 const overlay_visible = ref(false); // 控制遮罩层显示状态
 const token = ref('');
 const auto_login = ref(false);
-const has_verified = ref(false)
-const has_tested = ref(false)
-const account_info = ref({})
-const today_status = ref({})
-const daka_config = ref({})
+const has_verified = ref(false);
+const has_tested = ref(false);
+const account_info = ref({});
+const today_status = ref({});
+const daka_config = ref(DEFAULT_DAKA_CONFIG);
 const errorMessage = ref(''); // 错误提示信息
 
 // 卡片折叠状态控制
 const isCollapsed1 = ref(true);
 const isCollapsed2 = ref(true);
-isCollapsed1.value = localStorage.getItem('isCollapsed1') === 'true' ? true : false;
-isCollapsed2.value = localStorage.getItem('isCollapsed2') === 'true' ? true : false;
+isCollapsed1.value = localStorage.getItem('isCollapsed1') === 'true';
+isCollapsed2.value = localStorage.getItem('isCollapsed2') === 'true';
 
+const getHeaders = (authToken) => ({
+  Authorization: `Bearer ${authToken}`,
+  terminal: '0',
+  'UNI-Request-Source': '4',
+  Pragma: 'no-cache',
+  'User-Agent':
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x1800352e) NetType/WIFI Language/zh_CN',
+  'content-type': 'application/json',
+});
+
+const getMonthQuery = () => {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${now.getFullYear()}-${month}`;
+};
+
+const fetchWithHeaders = async (url, authToken) => {
+  try {
+    const response = await axios.get(url, { headers: getHeaders(authToken) });
+    return response.data;
+  } catch (error) {
+    console.error('请求失败:', error);
+    return null;
+  }
+};
+
+const getAccountInfo = async (authToken) => {
+  try {
+    const [response1, response2, response3] = await Promise.all([
+      fetchWithHeaders(`${API_BASE}/api-saas/v1/account/detail`, authToken),
+      fetchWithHeaders(
+        `${API_BASE}/api-attendance/v1/statistics/individual/daily?month=${getMonthQuery()}&personNo=&ID=myStatic`,
+        authToken,
+      ),
+      fetchWithHeaders(`${API_BASE}/api-attendance/mobile-clock/v1/individual-clock-rules`, authToken),
+    ]);
+
+    if (response1?.code !== 0 || response2?.code !== 0 || response3?.code !== 0) {
+      return null;
+    }
+
+    if (!response1?.data || !response2?.data || !response3?.data) {
+      return null;
+    }
+
+    return {
+      nick_name: response1.data?.nickName ?? '未设置昵称',
+      phone: response1.data?.phone ?? '未绑定手机号',
+      team_name: response2.data?.orgName ?? '无团队身份',
+      name: response2.data?.personName ?? '未设置姓名',
+      rule: response3.data?.shiftDetail ?? '未设置打卡规则',
+      message: 'success',
+    };
+  } catch (error) {
+    console.error('获取账号信息失败:', error);
+    return null;
+  }
+};
 
 const verify_input = () => {
   if (token.value.length === 36) {
@@ -35,104 +105,128 @@ const verify_input = () => {
   }
 };
 
-const test_token = () => {
-  if (token.value.length === 36) {
-    // 使用axios将token.value发送到后端进行验证
-    axios.post('/api/test_token', { token: token.value })
-      .then(response => {
-        if (response.data.message === 'success') {
-          has_tested.value = true;
-          account_info.value = response.data;
-          // 将token保存到本地存储
-          localStorage.setItem('token', token.value);
-          localStorage.setItem('token_time', new Date().getTime());
-          overlay_visible.value = false;
-          Toast({
-            duration: 3000,
-            theme: 'success',
-            direction: 'column',
-            message: '登录成功',
-          });
-          get_today_status();
-        } else {
-          Toast(response.data.message);
-        }
-      })
-      .catch(error => {
-        console.error(error);
-        Toast('网络异常，请稍后再试');
-      })
-      .finally(() => {
-        overlay_visible.value = false;
-      });
-  } else {
+const test_token = async () => {
+  if (token.value.length !== 36) {
     overlay_visible.value = false;
     Toast('Token长度为36位 请检查后重新输入');
+    return;
   }
-}
+
+  overlay_visible.value = true;
+  const account = await getAccountInfo(token.value);
+
+  if (account?.message === 'success') {
+    has_tested.value = true;
+    account_info.value = account;
+    // 将token保存到本地存储
+    localStorage.setItem('token', token.value);
+    localStorage.setItem('token_time', new Date().getTime().toString());
+    overlay_visible.value = false;
+    Toast({
+      duration: 3000,
+      theme: 'success',
+      direction: 'column',
+      message: '登录成功',
+    });
+    await get_today_status();
+  } else {
+    overlay_visible.value = false;
+    Toast('token无效 请重新获取');
+  }
+};
 
 const get_today_status = async () => {
   try {
-    const response = await axios.post('/api/get_today_status', { token: token.value });
-    if (response.data) {
-      today_status.value = response.data;
+    const response = await axios.get(`${API_BASE}/api-attendance/mobile-clock/v1/require-commuting`, {
+      headers: getHeaders(token.value),
+    });
+
+    if (response.data?.code === 0) {
+      today_status.value = response.data.data ?? {};
       get_daka_config();
       return true;
-    } else {
-      Toast(response.data.message);
-      return false;
     }
+
+    Toast(response.data?.msg ?? '获取打卡状态失败');
+    return false;
   } catch (error) {
     Toast('网络异常，请稍后再试');
     return false;
   }
-}
+};
+
+const addRandomOffset = (latitude, longitude, maxDistance = 50) => {
+  const latOffset = maxDistance / 111000;
+  const lngOffset = maxDistance / (111000 * Math.abs(Math.cos((latitude * Math.PI) / 180)));
+
+  const newLatitude = latitude + (Math.random() * 2 - 1) * latOffset;
+  const newLongitude = longitude + (Math.random() * 2 - 1) * lngOffset;
+
+  return { newLatitude, newLongitude };
+};
+
+const getSign = (payload) => {
+  const sortedKeys = Object.keys(payload).sort();
+  const baseString = sortedKeys.map((key) => `${key}=${payload[key]}`).join('&');
+  const firstHash = md5(baseString).toUpperCase();
+  return md5((firstHash + FIXED_SIGN_SALT).toUpperCase()).toUpperCase();
+};
 
 const daka = async () => {
   try {
-    const response = await axios.post('/api/daka', { token: token.value });
-    if (response.data.message === 'success') {
-      const statusResponse = await axios.post('/api/get_today_status', { token: token.value });
-      if (statusResponse.data) {
-        today_status.value = statusResponse.data;
-        Toast({
-          duration: 3000,
-          theme: 'success',
-          direction: 'column',
-          message: '打卡成功',
-        });
-      } else {
-        Toast(statusResponse.data.message);
-      }
+    const headers = getHeaders(token.value);
+    const { newLatitude, newLongitude } = addRandomOffset(DEFAULT_DAKA_CONFIG.latitude, DEFAULT_DAKA_CONFIG.longitude);
+    const payload = {
+      deviceSerial: '',
+      longitude: newLongitude,
+      latitude: newLatitude,
+      clockSite: '江苏省南京市浦口区江浦街道南京农业大学(滨江校区)',
+      address: DEFAULT_DAKA_CONFIG.address,
+      deviceName: DEFAULT_DAKA_CONFIG.device_name,
+      wifiName: DEFAULT_DAKA_CONFIG.wifi,
+      wifiMac: DEFAULT_DAKA_CONFIG.wifi_mac,
+    };
 
+    const signedHeaders = {
+      ...headers,
+      sign: getSign(payload),
+      timestamp: Date.now().toString(),
+      authPerm: 'PUNCHCLOCKFUN',
+      appNo: '__UNI__89A1A02',
+    };
+
+    const response = await axios.post(
+      `${API_BASE}/api-attendance/mobile-clock/v1/normal`,
+      payload,
+      { headers: signedHeaders },
+    );
+
+    if (response.data?.code === 0) {
+      await get_today_status();
+      Toast({
+        duration: 3000,
+        theme: 'success',
+        direction: 'column',
+        message: '打卡成功',
+      });
     } else {
-      Toast(response.data.message);
+      Toast(response.data?.msg ?? '打卡失败');
     }
   } catch (error) {
     Toast('网络异常，请稍后再试');
   }
-}
-
+};
 
 const refresh_today_status = async () => {
-  const success = await get_today_status();  // 使用 await 等待异步函数完成
+  const success = await get_today_status();
   if (success) {
     Toast('刷新成功');
   }
-}
-const get_daka_config = async () => {
-  axios.get('/api/get_daka_config')
-    .then(response => {
-      if (response.data) {
-        daka_config.value = response.data;
-      } else {
-        Toast(response.data.message);
-      }
-    })
-    .catch(error => {
-      Toast('网络异常，请稍后再试');
-    });
-}
+};
+
+const get_daka_config = () => {
+  daka_config.value = DEFAULT_DAKA_CONFIG;
+};
 
 const toggleCard = (index) => {
   if (index === 1) {

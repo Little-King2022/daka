@@ -1,6 +1,6 @@
 # daka_web
 
-This template should help get you started developing with Vue 3 in Vite.
+This project now bundles all former Flask features into the Vue front-end, so there is no need to deploy a standalone backend service. The Vue 3 + Vite template has been tailored for this use case.
 
 ## Recommended IDE Setup
 
@@ -14,16 +14,10 @@ See [Vite Configuration Reference](https://vite.dev/config/).
 
 ```sh
 npm install
-```
 
-### Compile and Hot-Reload for Development
-
-```sh
+# 开发模式
 npm run dev
-```
 
-### Compile and Minify for Production
-
-```sh
+# 生产构建
 npm run build
 ```

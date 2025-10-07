@@ -1,6 +1,6 @@
 <script setup>
 import { ref, h } from 'vue';
-import { Toast } from 'tdesign-mobile-vue';
+import { Toast, Dialog } from 'tdesign-mobile-vue';
 import axios from 'axios';
 import md5 from './utils/md5';
 import { IconFont, CloseIcon, CheckIcon } from 'tdesign-icons-vue-next';
@@ -37,12 +37,10 @@ isCollapsed1.value = localStorage.getItem('isCollapsed1') === 'true';
 isCollapsed2.value = localStorage.getItem('isCollapsed2') === 'true';
 
 const getHeaders = (authToken) => ({
-  Authorization: `Bearer ${authToken}`,
-  terminal: '0',
+  'Authorization': `Bearer ${authToken}`,
+  'terminal': '0',
   'UNI-Request-Source': '4',
-  Pragma: 'no-cache',
-  'User-Agent':
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x1800352e) NetType/WIFI Language/zh_CN',
+  'Pragma': 'no-cache',
   'content-type': 'application/json',
 });
 
@@ -81,12 +79,18 @@ const getAccountInfo = async (authToken) => {
       return null;
     }
 
+    // 单独处理rule，如果是休息，后面加一个emoji
+    let rule = response3.data?.shiftDetail ?? '未设置打卡规则';
+    if (rule.includes('休息')) {
+      rule = '休息 🥳';
+    }
+
     return {
       nick_name: response1.data?.nickName ?? '未设置昵称',
       phone: response1.data?.phone ?? '未绑定手机号',
       team_name: response2.data?.orgName ?? '无团队身份',
       name: response2.data?.personName ?? '未设置姓名',
-      rule: response3.data?.shiftDetail ?? '未设置打卡规则',
+      rule: rule,
       message: 'success',
     };
   } catch (error) {
@@ -169,7 +173,7 @@ const getSign = (payload) => {
   const sortedKeys = Object.keys(payload).sort();
   const baseString = sortedKeys.map((key) => `${key}=${payload[key]}`).join('&');
   const firstHash = md5(baseString).toUpperCase();
-  return md5((firstHash + FIXED_SIGN_SALT).toUpperCase()).toUpperCase();
+  return md5(firstHash + FIXED_SIGN_SALT).toUpperCase();
 };
 
 const daka = async () => {
@@ -217,6 +221,23 @@ const daka = async () => {
   }
 };
 
+const handleDakaClick = async () => {
+  const ruleText = account_info.value?.rule ?? '';
+  if (typeof ruleText === 'string' && ruleText.includes('休息')) {
+    const res = await Dialog.confirm({
+      title: '确认打卡',
+      content: '今日打卡规则为休息，是否仍要打卡？',
+      confirmBtn: { content: '仍要打卡' },
+      cancelBtn: { content: '取消' },
+    });
+    if (res?.confirm) {
+      daka();
+    }
+  } else {
+    daka();
+  }
+};
+
 const refresh_today_status = async () => {
   const success = await get_today_status();
   if (success) {
@@ -260,7 +281,7 @@ if (localStorage.getItem('token')) {
 <template>
   <t-overlay :visible="overlay_visible" />
   <div v-if="!has_tested">
-    <h1 style="text-align: center;">远程打卡小工具</h1>
+    <h1 style="text-align: center;">打卡小工具</h1>
     <t-divider />
   </div>
 
@@ -330,29 +351,35 @@ if (localStorage.getItem('token')) {
       <!-- <t-divider /> -->
       <p style="font-size: larger;font-weight: bold;text-align: center;margin: 1% auto 5px;">今日打卡信息</p>
       <div class="card">
-        <p style="font-weight: bold;text-align: center;">当前班次打卡</p>
-        <div v-if="today_status.current">
-          <div>
-            <div v-for="(item, index) in today_status.current.details" :key="index" style="margin-left: 20px;">
-              <p>{{ item.desc }}：{{ item.statusDesc }}
-              <div v-if="item.currentTag" style="color: red;display: contents;">&nbsp;[当前打卡点]</div>
-              </p>
-            </div>
-          </div>
+        <div v-if="typeof account_info.rule === 'string' && account_info.rule.includes('休息')"
+          style="text-align: center; color: blue; margin: 10px;">
+          今日无需打卡
         </div>
-        <p style="font-weight: bold;text-align: center;margin-top: 10px;">其他班次打卡</p>
-        <div v-if="today_status.others">
-          <div v-for="(shift, shiftIndex) in today_status.others" :key="shiftIndex" class="shift"
-            style="margin-left: 20px;">
+        <div v-else>
+          <p style="font-weight: bold;text-align: center;">当前班次打卡</p>
+          <div v-if="today_status.current">
             <div>
-              <div v-for="(item, index) in shift.details" :key="index">
-                <p>{{ item.desc }}：{{ item.statusDesc }}</p>
+              <div v-for="(item, index) in today_status.current.details" :key="index" style="margin-left: 20px;">
+                <p>{{ item.desc }}：{{ item.statusDesc }}
+                <div v-if="item.currentTag" style="color: red;display: contents;">&nbsp;[当前打卡点]</div>
+                </p>
               </div>
             </div>
           </div>
-        </div>
-        <div style="width: 50%;text-align: center;margin: 0 auto;">
-          <t-button theme="light" variant="outline" @click="refresh_today_status" block>刷新列表</t-button>
+          <p style="font-weight: bold;text-align: center;margin-top: 10px;">其他班次打卡</p>
+          <div v-if="today_status.others">
+            <div v-for="(shift, shiftIndex) in today_status.others" :key="shiftIndex" class="shift"
+              style="margin-left: 20px;">
+              <div>
+                <div v-for="(item, index) in shift.details" :key="index">
+                  <p>{{ item.desc }}：{{ item.statusDesc }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="width: 50%;text-align: center;margin: 0 auto;">
+            <t-button theme="light" variant="outline" @click="refresh_today_status" block>刷新列表</t-button>
+          </div>
         </div>
       </div>
       <br>
@@ -360,7 +387,7 @@ if (localStorage.getItem('token')) {
 
       <br>
       <div style="text-align: center;">
-        <t-button theme="primary" @click="daka"
+        <t-button theme="primary" @click="handleDakaClick"
           style="font-size: 20px;letter-spacing: 3px;text-align: center;width: 70%;height: 60px;margin: 0 20px;box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);">一键打卡</t-button>
       </div>
       <div style="text-align: center;font-size: small; color: grey;margin-top: 10px;">请勿连续点击按钮，防止重复打卡</div>

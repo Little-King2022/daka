@@ -15,10 +15,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': {
-        target: 'https://daka.littleking.site/api',
+      '/api/daka': {
+        target: 'https://daka2.littleking.site/api/daka',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, '')
+        rewrite: (path) => path.replace(/^\/api\/daka/, '')
       }
     }
   }

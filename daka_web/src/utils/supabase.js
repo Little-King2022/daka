@@ -60,11 +60,11 @@ const getUserIP = async () => {
     }
 
     // console.log('正在获取IP地址...')
-    const response = await fetch('https://api.ipify.org?format=json')
-    const data = await response.json()
-    
+    const response = await fetch('https://api.ip.sb/ip')
+    const data = await response.text()
+
     // 缓存IP地址
-    cachedIP = data.ip
+    cachedIP = data.trim()
     // console.log('IP地址已缓存:', cachedIP)
     
     return cachedIP

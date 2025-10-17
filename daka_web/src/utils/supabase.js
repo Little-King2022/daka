@@ -5,22 +5,51 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_KEY || 'your-supabase-anon-key
 
 export const supabase = createClient(supabaseUrl, supabaseKey)
 
+let authInitPromise = null
+let cachedSession = null
+
+export const initSupabaseAuth = async () => {
+  if (cachedSession) {
+    return cachedSession
+  }
+
+  if (!authInitPromise) {
+    authInitPromise = (async () => {
+      const {
+        data: { session }
+      } = await supabase.auth.getSession()
+
+      if (session) {
+        cachedSession = session
+        return cachedSession
+      }
+
+      const { data, error } = await supabase.auth.signInAnonymously()
+
+      if (error) {
+        throw error
+      }
+
+      cachedSession = data?.session ?? null
+      return cachedSession
+    })()
+  }
+
+  try {
+    return await authInitPromise
+  } catch (error) {
+    authInitPromise = null
+    throw error
+  }
+}
+
 // 缓存IP地址，当前会话有效
 let cachedIP = null
 
 // 记录用户信息到数据库
 export const recordUserInfo = async (userInfo) => {
   try {
-    // 并行创建匿名用户身份和获取IP，减少等待时间
-    const [authResult, ip] = await Promise.all([
-      supabase.auth.signInAnonymously().catch((error) => ({ error })),
-      getUserIP()
-    ])
-
-    if (authResult?.error) {
-      // console.error('匿名登录失败:', authResult.error)
-      // 如果匿名登录失败，仍然尝试插入数据
-    }
+    const ip = await getUserIP()
 
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'
 

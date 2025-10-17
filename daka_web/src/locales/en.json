@@ -1,0 +1,78 @@
+{
+  "app": {
+    "title": "Check-in Helper"
+  },
+  "instructions": {
+    "title": "Steps to obtain the \"Hik IOT\" token",
+    "step1": "1. On your computer browser, open the \"Hik IOT\" workspace:<br><a href=\"https://www.hikiot.com/tenant/workBench\" target=\"_blank\">https://www.hikiot.com/tenant/workBench</a>",
+    "step2": "2. Log in with the SMS verification code. Make sure the phone number matches the one used in the mini program.",
+    "step3": "3. After logging in, press \"F12\" to open the developer tools (or right-click the page and choose \"Inspect\").",
+    "step4": "4. Follow the guide below to copy the value of \"www_token\" and paste it into the field below.",
+    "pastePrompt": "Please paste the www_token below"
+  },
+  "inputs": {
+    "tokenPlaceholder": "Please enter www_token"
+  },
+  "buttons": {
+    "login": "Log in",
+    "refresh": "Refresh List",
+    "primaryCheckIn": "One-click Check-in",
+    "proceedCheckIn": "Check in anyway",
+    "cancel": "Cancel"
+  },
+  "messages": {
+    "tokenStored": "After a successful login, the token is saved locally in your browser for faster login next time.",
+    "tokenExpiry": "The token is valid for 30 days. You can reuse it during the validity period and need to retrieve a new one afterward.",
+    "tokenLengthError": "The token must be 36 characters. Please check and try again.",
+    "loginSuccess": "Login successful",
+    "invalidToken": "Invalid token, please retrieve it again.",
+    "fetchStatusFailed": "Failed to fetch check-in status",
+    "networkError": "Network error, please try again later.",
+    "restDayTitle": "Confirm Check-in",
+    "restDayPrompt": "Today's rule is rest. Do you still want to check in?",
+    "refreshSuccess": "Refreshed successfully",
+    "checkInSuccess": "Check-in successful",
+    "unknownError": "Unknown error",
+    "checkInFailed": "Check-in failed",
+    "ruleRestLabel": "Rest day 🥳"
+  },
+  "account": {
+    "ruleUnset": "No attendance rule set",
+    "nicknameUnset": "Nickname not set",
+    "phoneUnset": "Phone number not bound",
+    "noTeam": "No team role",
+    "nameUnset": "Name not set"
+  },
+  "cards": {
+    "userInfo": {
+      "title": "User Information",
+      "nickname": "Nickname",
+      "phone": "Bound Phone",
+      "team": "Team",
+      "rule": "Attendance Rule"
+    },
+    "location": {
+      "title": "Location Simulation",
+      "address": "Province & Street",
+      "clockAddress": "Check-in Address",
+      "longitude": "Longitude",
+      "latitude": "Latitude",
+      "wifiName": "Wi-Fi Name",
+      "wifiMac": "Wi-Fi MAC Address",
+      "randomOffset": "Random location offset: 50 meters"
+    },
+    "today": {
+      "title": "Today's Check-in Information",
+      "noCheckIn": "No check-in required today",
+      "currentTitle": "Current Shift Check-in",
+      "otherTitle": "Other Shift Check-ins"
+    }
+  },
+  "hints": {
+    "avoidRepeat": "Please do not click repeatedly to avoid duplicate check-ins.",
+    "learningOnly": "For learning and communication only. Use responsibly."
+  },
+  "settings": {
+    "autoLogin": "Auto login next time"
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "app": {
+    "title": "打卡小工具"
+  },
+  "instructions": {
+    "title": "获取\"海康物联\"Token操作步骤",
+    "step1": "1. 在电脑浏览器中打开\"海康物联\"工作台:<br><a href=\"https://www.hikiot.com/tenant/workBench\" target=\"_blank\">https://www.hikiot.com/tenant/workBench</a>",
+    "step2": "2. 使用短信验证码登录账号，请确保手机号和微信小程序中的一致",
+    "step3": "3. 登录成功后，按“F12”打开开发者工具(或右击页面，点击“检查”)",
+    "step4": "4. 按照下图引导，复制“www_token”的值到下面的文本框中",
+    "pastePrompt": "请在下方粘贴www_token"
+  },
+  "inputs": {
+    "tokenPlaceholder": "请输入www_token"
+  },
+  "buttons": {
+    "login": "登录账号",
+    "refresh": "刷新列表",
+    "primaryCheckIn": "一键打卡",
+    "proceedCheckIn": "仍要打卡",
+    "cancel": "取消"
+  },
+  "messages": {
+    "tokenStored": "登录成功后，Token将保存在浏览器本地，方便下次快速登录",
+    "tokenExpiry": "Token有效期为30天，有效期内可重复使用，超出时间后需要重新获取",
+    "tokenLengthError": "Token 长度应为 36 位，请检查后重新输入",
+    "loginSuccess": "登录成功",
+    "invalidToken": "token无效 请重新获取",
+    "fetchStatusFailed": "获取打卡状态失败",
+    "networkError": "网络异常，请稍后再试",
+    "restDayTitle": "确认打卡",
+    "restDayPrompt": "今日打卡规则为休息，是否仍要打卡？",
+    "refreshSuccess": "刷新成功",
+    "checkInSuccess": "打卡成功",
+    "unknownError": "未知错误",
+    "checkInFailed": "打卡失败",
+    "ruleRestLabel": "休息 🥳"
+  },
+  "account": {
+    "ruleUnset": "未设置打卡规则",
+    "nicknameUnset": "未设置昵称",
+    "phoneUnset": "未绑定手机号",
+    "noTeam": "无团队身份",
+    "nameUnset": "未设置姓名"
+  },
+  "cards": {
+    "userInfo": {
+      "title": "用户信息",
+      "nickname": "用户名称",
+      "phone": "绑定手机",
+      "team": "团队身份",
+      "rule": "打卡规则"
+    },
+    "location": {
+      "title": "位置模拟",
+      "address": "省市街道",
+      "clockAddress": "打卡地址",
+      "longitude": "经度",
+      "latitude": "纬度",
+      "wifiName": "Wi-Fi名称",
+      "wifiMac": "Wi-Fi Mac地址",
+      "randomOffset": "定位点随机偏移：50 米"
+    },
+    "today": {
+      "title": "今日打卡信息",
+      "noCheckIn": "今日无需打卡",
+      "currentTitle": "当前班次打卡",
+      "otherTitle": "其他班次打卡"
+    }
+  },
+  "hints": {
+    "avoidRepeat": "请勿连续点击按钮，防止重复打卡",
+    "learningOnly": "仅供学习交流，请合理使用"
+  },
+  "settings": {
+    "autoLogin": "下次自动登录"
+  }
+}

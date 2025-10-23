@@ -1,5 +1,5 @@
 <script setup>
-import { ref, h } from 'vue';
+import { ref, h, computed, onBeforeUnmount } from 'vue';
 import { Toast, Dialog } from 'tdesign-mobile-vue';
 import axios from 'axios';
 import md5 from './utils/md5';
@@ -35,6 +35,40 @@ const today_status = ref({});
 const daka_config = ref(DEFAULT_DAKA_CONFIG);
 const errorMessage = ref('');
 const isCheckingIn = ref(false);
+const cooldownRemaining = ref(0);
+let cooldownTimer = null;
+
+const clearCooldown = () => {
+  if (cooldownTimer) {
+    clearInterval(cooldownTimer);
+    cooldownTimer = null;
+  }
+};
+
+const startCooldown = (seconds) => {
+  clearCooldown();
+  cooldownRemaining.value = seconds;
+  cooldownTimer = setInterval(() => {
+    if (cooldownRemaining.value <= 1) {
+      cooldownRemaining.value = 0;
+      clearCooldown();
+    } else {
+      cooldownRemaining.value -= 1;
+    }
+  }, 1000);
+};
+
+onBeforeUnmount(() => {
+  clearCooldown();
+});
+
+const checkInButtonText = computed(() => {
+  const baseText = t('buttons.primaryCheckIn');
+  if (cooldownRemaining.value > 0) {
+    return `${baseText} (${cooldownRemaining.value}s)`;
+  }
+  return baseText;
+});
 
 const isCollapsed1 = ref(true);
 const isCollapsed2 = ref(true);
@@ -246,6 +280,7 @@ const daka = async () => {
         direction: 'column',
         message: t('messages.checkInSuccess'),
       });
+      startCooldown(15);
     } else {
       await recordUserInfo({
         nick_name: account_info.value.nick_name,
@@ -273,7 +308,7 @@ const daka = async () => {
 };
 
 const handleDakaClick = async () => {
-  if (isCheckingIn.value) {
+  if (isCheckingIn.value || cooldownRemaining.value > 0) {
     return;
   }
 
@@ -443,9 +478,13 @@ if (localStorage.getItem('token')) {
 
       <br>
       <div style="text-align: center;">
-        <t-button theme="primary" @click="handleDakaClick" :disabled="isCheckingIn" :loading="isCheckingIn"
+        <t-button
+          theme="primary"
+          @click="handleDakaClick"
+          :disabled="isCheckingIn || cooldownRemaining > 0"
+          :loading="isCheckingIn"
           style="font-size: 20px;letter-spacing: 3px;text-align: center;width: 70%;height: 60px;margin: 0 20px;box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);">
-          {{ t('buttons.primaryCheckIn') }}
+          {{ checkInButtonText }}
         </t-button>
       </div>
       <div style="text-align: center;font-size: small; color: grey;margin-top: 10px;">{{ t('hints.avoidRepeat') }}</div>

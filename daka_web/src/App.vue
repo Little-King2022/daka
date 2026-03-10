@@ -514,10 +514,10 @@ if (localStorage.getItem('token')) {
     </div>
     <br>
     <div v-if="daka_config" class="card">
+      <edit-icon class="edit-icon" @click.stop="openEditDialog" size="18px" />
       <div @click="toggleCard(2)">
         <p style="font-size: larger; font-weight: bold; text-align: center;"
           :style="{ color: isCollapsed2 ? '#c1c1c1' : '#333' }">{{ t('cards.location.title') }}</p>
-        <edit-icon class="edit-icon" @click.stop="openEditDialog" size="18px" />
         <icon-font class="toggle-icon" :name="isCollapsed2 ? 'expand-down' : 'expand-up'"></icon-font>
       </div>
       <div class="card-content" style="margin-left: 20px;" v-show="!isCollapsed2">

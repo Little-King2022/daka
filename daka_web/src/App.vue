@@ -682,7 +682,7 @@ if (localStorage.getItem('token')) {
 }
 
 .card-details {
-  margin: 0 0 5px 20px;
+  margin: 0 0 5px;
   text-align: left;
 }
 

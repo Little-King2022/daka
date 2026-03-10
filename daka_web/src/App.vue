@@ -505,7 +505,7 @@ if (localStorage.getItem('token')) {
           :style="{ color: isCollapsed1 ? '#c1c1c1' : '#333' }">{{ t('cards.userInfo.title') }}</p>
         <icon-font class="toggle-icon" :name="isCollapsed1 ? 'expand-down' : 'expand-up'"></icon-font>
       </div>
-      <div class="card-content" style="margin: 0 auto 5px;" v-show="!isCollapsed1">
+      <div class="card-content card-details" v-show="!isCollapsed1">
         <p>{{ t('cards.userInfo.nickname') }}：{{ account_info.nick_name }}</p>
         <p>{{ t('cards.userInfo.phone') }}：{{ account_info.phone }}</p>
         <p>{{ t('cards.userInfo.team') }}：{{ account_info.team_name }} - {{ account_info.name }}</p>
@@ -522,7 +522,7 @@ if (localStorage.getItem('token')) {
           :style="{ color: isCollapsed2 ? '#c1c1c1' : '#333' }">{{ t('cards.location.title') }}</p>
         <icon-font class="toggle-icon" :name="isCollapsed2 ? 'expand-down' : 'expand-up'"></icon-font>
       </div>
-      <div class="card-content" style="margin-left: 20px;" v-show="!isCollapsed2">
+      <div class="card-content card-details" v-show="!isCollapsed2">
         <p>{{ t('cards.location.address') }}：{{ daka_config.address }}</p>
         <p>{{ t('cards.location.clockAddress') }}：{{ daka_config.location }}</p>
         <p>{{ t('cards.location.longitude') }}：{{ daka_config.longitude }} </p>
@@ -681,6 +681,11 @@ if (localStorage.getItem('token')) {
   transition: max-height 0.3s ease-in-out;
 }
 
+.card-details {
+  margin: 0 0 5px 20px;
+  text-align: left;
+}
+
 .toggle-icon {
   position: absolute;
   top: 12px;
@@ -781,6 +786,53 @@ if (localStorage.getItem('token')) {
 .edit-input {
   border: 1px solid rgba(220, 220, 220, 1);
   border-radius: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .edit-dialog-backdrop {
+    background: rgba(0, 0, 0, 0.7);
+  }
+
+  .edit-dialog-panel {
+    background: #1f2937;
+    color: #f3f4f6;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  }
+
+  .edit-dialog-header {
+    border-bottom-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .edit-dialog-title,
+  .edit-dialog-close,
+  .edit-field label {
+    color: #f3f4f6;
+  }
+
+  .edit-dialog-footer {
+    border-top-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .edit-icon {
+    color: #d1d5db;
+  }
+
+  .edit-input {
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .edit-input :deep(.t-input) {
+    background: #111827;
+    color: #f9fafb;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .edit-input :deep(.t-input__inner),
+  .edit-input :deep(.t-input__inner::placeholder),
+  .edit-input :deep(.t-input__suffix),
+  .edit-input :deep(.t-input__tips) {
+    color: #d1d5db;
+  }
 }
 
 .edit-dialog-footer {

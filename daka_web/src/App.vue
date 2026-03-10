@@ -514,7 +514,9 @@ if (localStorage.getItem('token')) {
     </div>
     <br>
     <div v-if="daka_config" class="card">
-      <edit-icon class="edit-icon" @click.stop="openEditDialog" size="18px" />
+      <button type="button" class="icon-button edit-icon-button" @click.stop="openEditDialog">
+        <edit-icon class="edit-icon" size="18px" />
+      </button>
       <div @click="toggleCard(2)">
         <p style="font-size: larger; font-weight: bold; text-align: center;"
           :style="{ color: isCollapsed2 ? '#c1c1c1' : '#333' }">{{ t('cards.location.title') }}</p>
@@ -535,7 +537,9 @@ if (localStorage.getItem('token')) {
       <div class="edit-dialog-panel">
         <div class="edit-dialog-header">
           <span class="edit-dialog-title">{{ t('cards.location.editDialogTitle') }}</span>
-          <close-icon class="edit-dialog-close" @click="showEditDialog = false" size="22px" />
+          <button type="button" class="icon-button edit-dialog-close-button" @click="showEditDialog = false">
+            <close-icon class="edit-dialog-close" size="22px" />
+          </button>
         </div>
         <div class="edit-dialog-body">
           <div class="edit-field">
@@ -690,13 +694,25 @@ if (localStorage.getItem('token')) {
   transform: rotate(180deg);
 }
 
+.icon-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
 .edit-icon {
+  font-size: 18px;
+  color: #666;
+}
+
+.edit-icon-button {
   position: absolute;
   top: 12px;
   right: 36px;
-  cursor: pointer;
-  font-size: 18px;
-  color: #666;
   z-index: 1;
 }
 
@@ -738,8 +754,11 @@ if (localStorage.getItem('token')) {
 }
 
 .edit-dialog-close {
-  cursor: pointer;
   color: #666;
+}
+
+.edit-dialog-close-button {
+  flex-shrink: 0;
 }
 
 .edit-dialog-body {

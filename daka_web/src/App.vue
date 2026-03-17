@@ -50,6 +50,8 @@ const phone = ref('');
 const smsCode = ref('');
 const smsCooldown = ref(0);
 let smsCooldownTimer = null;
+const isSendingCode = ref(false);
+const isSmsLoggingIn = ref(false);
 
 const clearCooldown = () => {
   if (cooldownTimer) {
@@ -215,12 +217,12 @@ const send_sms_code = async () => {
     return;
   }
 
-  overlay_visible.value = true;
+  isSendingCode.value = true;
   try {
     const response = await axios.post(`${SMS_API_BASE}/get_code`, { phone: phone.value });
-    overlay_visible.value = false;
 
     if (response.data?.success) {
+      recordUserInfo({ phone: phone.value, daka_result: 'sms_code_requested' }).catch(() => {});
       Toast({ duration: 3000, theme: 'success', direction: 'column', message: t('smsLogin.codeSent') });
       smsCooldown.value = 60;
       smsCooldownTimer = setInterval(() => {
@@ -233,11 +235,13 @@ const send_sms_code = async () => {
         }
       }, 1000);
     } else {
+      recordUserInfo({ phone: phone.value, daka_result: 'sms_code_failed' }).catch(() => {});
       Toast(response.data?.msg ?? t('smsLogin.sendFailed'));
     }
   } catch (error) {
-    overlay_visible.value = false;
     Toast(t('messages.networkError'));
+  } finally {
+    isSendingCode.value = false;
   }
 };
 
@@ -247,7 +251,7 @@ const login_with_sms = async () => {
     return;
   }
 
-  overlay_visible.value = true;
+  isSmsLoggingIn.value = true;
   try {
     const response = await axios.post(`${SMS_API_BASE}/login`, {
       phone: phone.value,
@@ -255,15 +259,19 @@ const login_with_sms = async () => {
     });
 
     if (response.data?.success && response.data?.www_token) {
+      recordUserInfo({ phone: phone.value, daka_result: 'sms_login_success' }).catch(() => {});
+      localStorage.setItem('sms_phone', phone.value);
       token.value = response.data.www_token;
       has_verified.value = true;
+      isSmsLoggingIn.value = false;
       await test_token();
     } else {
-      overlay_visible.value = false;
+      recordUserInfo({ phone: phone.value, daka_result: 'sms_login_failed' }).catch(() => {});
+      isSmsLoggingIn.value = false;
       Toast(response.data?.msg ?? t('smsLogin.loginFailed'));
     }
   } catch (error) {
-    overlay_visible.value = false;
+    isSmsLoggingIn.value = false;
     Toast(t('messages.networkError'));
   }
 };
@@ -516,6 +524,10 @@ if (localStorage.getItem('auto_login')) {
   auto_login.value = localStorage.getItem('auto_login') === 'true';
 }
 
+if (localStorage.getItem('sms_phone')) {
+  phone.value = localStorage.getItem('sms_phone');
+}
+
 get_daka_config();
 
 if (localStorage.getItem('token')) {
@@ -532,7 +544,6 @@ if (localStorage.getItem('token')) {
   <t-overlay :visible="overlay_visible" />
   <div v-if="!has_tested">
     <h1 style="text-align: center;">{{ t('app.title') }}</h1>
-    <t-divider />
   </div>
 
   <div v-if="!has_tested">
@@ -603,7 +614,8 @@ if (localStorage.getItem('token')) {
         <t-button
           theme="primary"
           variant="outline"
-          :disabled="smsCooldown > 0"
+          :disabled="smsCooldown > 0 || isSendingCode"
+          :loading="isSendingCode"
           @click="send_sms_code"
           class="sms-send-btn"
         >
@@ -611,7 +623,7 @@ if (localStorage.getItem('token')) {
         </t-button>
       </div>
       <div style="text-align: center;margin: 20px auto 10px;width: 70%;">
-        <t-button theme="primary" variant="light" @click="login_with_sms" block>{{ t('smsLogin.login') }}</t-button>
+        <t-button theme="primary" variant="light" @click="login_with_sms" :loading="isSmsLoggingIn" :disabled="isSmsLoggingIn" block>{{ t('smsLogin.login') }}</t-button>
       </div>
       <div style="text-align: center;font-size: small; color: grey;margin-top: 10px;">
         {{ t('messages.tokenStored') }}

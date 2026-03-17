@@ -82,5 +82,20 @@
   },
   "settings": {
     "autoLogin": "下次自动登录"
+  },
+  "smsLogin": {
+    "tabToken": "Token 登录",
+    "tabSms": "短信验证码 (BETA)",
+    "title": "短信验证码登录",
+    "phonePlaceholder": "请输入手机号",
+    "codePlaceholder": "请输入验证码",
+    "sendCode": "获取验证码",
+    "sendCodeCooldown": "{n}s 后重试",
+    "login": "登录账号",
+    "phoneError": "请输入有效的手机号",
+    "codeSent": "验证码已发送",
+    "sendFailed": "发送失败，请稍后再试",
+    "fillRequired": "请输入有效的手机号",
+    "loginFailed": "登录失败，请检查验证码"
   }
 }

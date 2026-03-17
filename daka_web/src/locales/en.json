@@ -82,5 +82,20 @@
   },
   "settings": {
     "autoLogin": "Auto login next time"
+  },
+  "smsLogin": {
+    "tabToken": "Token Login",
+    "tabSms": "SMS Code (BETA)",
+    "title": "SMS Verification Login",
+    "phonePlaceholder": "Enter phone number",
+    "codePlaceholder": "Enter verification code",
+    "sendCode": "Get Code",
+    "sendCodeCooldown": "Retry in {n}s",
+    "login": "Log in",
+    "phoneError": "Please enter a valid 11-digit phone number",
+    "codeSent": "Verification code sent, please check your phone",
+    "sendFailed": "Failed to send, please try again later",
+    "fillRequired": "Please enter your phone number and verification code",
+    "loginFailed": "Login failed, please check your verification code"
   }
 }

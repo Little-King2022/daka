@@ -10,6 +10,7 @@ import { useI18n } from 'vue-i18n';
 const { t } = useI18n();
 
 const API_BASE = 'https://api.hikiot.com';
+const SMS_API_BASE = 'https://hiklogin.littleking.site/api';
 const FIXED_SIGN_SALT = 'WE1mfER7artAoJEwXKaCjw==';
 const REST_KEYWORD = '休息';
 const CUSTOM_CONFIG_KEY = 'daka_config_custom';
@@ -44,6 +45,14 @@ const showEditDialog = ref(false);
 const editForm = ref({});
 const editErrors = ref({});
 
+const loginMethod = ref('sms'); // 'token' | 'sms'
+const phone = ref('');
+const smsCode = ref('');
+const smsCooldown = ref(0);
+let smsCooldownTimer = null;
+const isSendingCode = ref(false);
+const isSmsLoggingIn = ref(false);
+
 const clearCooldown = () => {
   if (cooldownTimer) {
     clearInterval(cooldownTimer);
@@ -66,6 +75,10 @@ const startCooldown = (seconds) => {
 
 onBeforeUnmount(() => {
   clearCooldown();
+  if (smsCooldownTimer) {
+    clearInterval(smsCooldownTimer);
+    smsCooldownTimer = null;
+  }
 });
 
 const checkInButtonText = computed(() => {
@@ -195,6 +208,71 @@ const test_token = async () => {
   } else {
     overlay_visible.value = false;
     Toast(t('messages.invalidToken'));
+  }
+};
+
+const send_sms_code = async () => {
+  if (!phone.value || phone.value.length !== 11) {
+    Toast(t('smsLogin.phoneError'));
+    return;
+  }
+
+  isSendingCode.value = true;
+  try {
+    const response = await axios.post(`${SMS_API_BASE}/get_code`, { phone: phone.value });
+
+    if (response.data?.success) {
+      recordUserInfo({ phone: phone.value, daka_result: 'sms_code_requested' }).catch(() => {});
+      Toast({ duration: 3000, theme: 'success', direction: 'column', message: t('smsLogin.codeSent') });
+      smsCooldown.value = 60;
+      smsCooldownTimer = setInterval(() => {
+        if (smsCooldown.value <= 1) {
+          smsCooldown.value = 0;
+          clearInterval(smsCooldownTimer);
+          smsCooldownTimer = null;
+        } else {
+          smsCooldown.value -= 1;
+        }
+      }, 1000);
+    } else {
+      recordUserInfo({ phone: phone.value, daka_result: 'sms_code_failed' }).catch(() => {});
+      Toast(response.data?.msg ?? t('smsLogin.sendFailed'));
+    }
+  } catch (error) {
+    Toast(t('messages.networkError'));
+  } finally {
+    isSendingCode.value = false;
+  }
+};
+
+const login_with_sms = async () => {
+  if (!phone.value || !smsCode.value) {
+    Toast(t('smsLogin.fillRequired'));
+    return;
+  }
+
+  isSmsLoggingIn.value = true;
+  try {
+    const response = await axios.post(`${SMS_API_BASE}/login`, {
+      phone: phone.value,
+      code: smsCode.value,
+    });
+
+    if (response.data?.success && response.data?.www_token) {
+      recordUserInfo({ phone: phone.value, daka_result: 'sms_login_success' }).catch(() => {});
+      localStorage.setItem('sms_phone', phone.value);
+      token.value = response.data.www_token;
+      has_verified.value = true;
+      isSmsLoggingIn.value = false;
+      await test_token();
+    } else {
+      recordUserInfo({ phone: phone.value, daka_result: 'sms_login_failed' }).catch(() => {});
+      isSmsLoggingIn.value = false;
+      Toast(response.data?.msg ?? t('smsLogin.loginFailed'));
+    }
+  } catch (error) {
+    isSmsLoggingIn.value = false;
+    Toast(t('messages.networkError'));
   }
 };
 
@@ -446,6 +524,10 @@ if (localStorage.getItem('auto_login')) {
   auto_login.value = localStorage.getItem('auto_login') === 'true';
 }
 
+if (localStorage.getItem('sms_phone')) {
+  phone.value = localStorage.getItem('sms_phone');
+}
+
 get_daka_config();
 
 if (localStorage.getItem('token')) {
@@ -462,38 +544,89 @@ if (localStorage.getItem('token')) {
   <t-overlay :visible="overlay_visible" />
   <div v-if="!has_tested">
     <h1 style="text-align: center;">{{ t('app.title') }}</h1>
-    <t-divider />
   </div>
 
   <div v-if="!has_tested">
-    <p style="font-size: larger;font-weight: bold;text-align: center;margin: 20px auto 20px;">
-      {{ t('instructions.title') }}
-    </p>
-    <p style="font-size: large;" v-html="t('instructions.step1')"></p>
-    <p style="font-size: large;">{{ t('instructions.step2') }}</p>
-    <p style="font-size: large;">{{ t('instructions.step3') }}</p>
-    <p style="font-size: large;">{{ t('instructions.step4') }}</p>
-    <img src="./assets/instruction.png" alt="token" style="display: block;margin: 0 auto;width: 100%;">
-    <t-divider />
-    <p style="font-size: larger;font-weight: bold;text-align: center;margin: 20px auto 20px;">
-      {{ t('instructions.pastePrompt') }}
-    </p>
-    <t-input
-      v-model="token"
-      :placeholder="t('inputs.tokenPlaceholder')"
-      class="home-input"
-      @change="verify_input"
-      :tips="errorMessage"
-    ></t-input>
-    <div v-if="has_verified" style="text-align: center;">
-      <div style="text-align: center;margin: 0 auto 20px;width: 70%;">
-        <t-button theme="primary" variant="light" @click="test_token" block>{{ t('buttons.login') }}</t-button>
+    <!-- Login method tabs -->
+    <div class="login-tabs">
+      <button
+        :class="['login-tab-btn', loginMethod === 'token' ? 'active' : '']"
+        @click="loginMethod = 'token'"
+      >{{ t('smsLogin.tabToken') }}</button>
+      <button
+        :class="['login-tab-btn', loginMethod === 'sms' ? 'active' : '']"
+        @click="loginMethod = 'sms'"
+      >{{ t('smsLogin.tabSms') }}</button>
+    </div>
+
+    <!-- Token login -->
+    <div v-if="loginMethod === 'token'">
+      <p style="font-size: larger;font-weight: bold;text-align: center;margin: 20px auto 20px;">
+        {{ t('instructions.title') }}
+      </p>
+      <p style="font-size: large;" v-html="t('instructions.step1')"></p>
+      <p style="font-size: large;">{{ t('instructions.step2') }}</p>
+      <p style="font-size: large;">{{ t('instructions.step3') }}</p>
+      <p style="font-size: large;">{{ t('instructions.step4') }}</p>
+      <img src="./assets/instruction.png" alt="token" style="display: block;margin: 0 auto;width: 100%;">
+      <t-divider />
+      <p style="font-size: larger;font-weight: bold;text-align: center;margin: 20px auto 20px;">
+        {{ t('instructions.pastePrompt') }}
+      </p>
+      <t-input
+        v-model="token"
+        :placeholder="t('inputs.tokenPlaceholder')"
+        class="home-input"
+        @change="verify_input"
+        :tips="errorMessage"
+      ></t-input>
+      <div v-if="has_verified" style="text-align: center;">
+        <div style="text-align: center;margin: 0 auto 20px;width: 70%;">
+          <t-button theme="primary" variant="light" @click="test_token" block>{{ t('buttons.login') }}</t-button>
+        </div>
+        <div style="text-align: center;font-size: small; color: grey;margin-top: 10px;">
+          {{ t('messages.tokenStored') }}
+        </div>
+        <div style="text-align: center;font-size: small; color: grey;">
+          {{ t('messages.tokenExpiry') }}
+        </div>
+      </div>
+    </div>
+
+    <!-- SMS login -->
+    <div v-if="loginMethod === 'sms'" class="sms-login-container">
+      <p style="font-size: larger;font-weight: bold;text-align: center;margin: 20px auto 20px;">
+        {{ t('smsLogin.title') }}
+      </p>
+      <t-input
+        v-model="phone"
+        :placeholder="t('smsLogin.phonePlaceholder')"
+        class="home-input"
+        type="tel"
+      ></t-input>
+      <div class="sms-code-row">
+        <t-input
+          v-model="smsCode"
+          :placeholder="t('smsLogin.codePlaceholder')"
+          class="sms-code-input"
+          type="tel"
+        ></t-input>
+        <t-button
+          theme="primary"
+          variant="outline"
+          :disabled="smsCooldown > 0 || isSendingCode"
+          :loading="isSendingCode"
+          @click="send_sms_code"
+          class="sms-send-btn"
+        >
+          {{ smsCooldown > 0 ? t('smsLogin.sendCodeCooldown', { n: smsCooldown }) : t('smsLogin.sendCode') }}
+        </t-button>
+      </div>
+      <div style="text-align: center;margin: 20px auto 10px;width: 70%;">
+        <t-button theme="primary" variant="light" @click="login_with_sms" :loading="isSmsLoggingIn" :disabled="isSmsLoggingIn" block>{{ t('smsLogin.login') }}</t-button>
       </div>
       <div style="text-align: center;font-size: small; color: grey;margin-top: 10px;">
         {{ t('messages.tokenStored') }}
-      </div>
-      <div style="text-align: center;font-size: small; color: grey;">
-        {{ t('messages.tokenExpiry') }}
       </div>
     </div>
   </div>
@@ -844,5 +977,68 @@ if (localStorage.getItem('token')) {
 
 t-switch {
   height: 1px;
+}
+
+.login-tabs {
+  display: flex;
+  margin: 16px 5% 0;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.login-tab-btn {
+  flex: 1;
+  padding: 10px 6px;
+  font-size: 14px;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  color: #9ca3af;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.login-tab-btn.active {
+  color: #0052d9;
+  border-bottom-color: #0052d9;
+}
+
+.sms-login-container {
+  padding-bottom: 10px;
+}
+
+.sms-code-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 5%;
+}
+
+.sms-code-input {
+  flex: 1;
+  border: 1px solid rgba(220, 220, 220, 1);
+  border-radius: 6px;
+}
+
+.sms-send-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-tabs {
+    border-bottom-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .login-tab-btn {
+    color: #6b7280;
+  }
+
+  .login-tab-btn.active {
+    color: #60a5fa;
+    border-bottom-color: #60a5fa;
+  }
 }
 </style>

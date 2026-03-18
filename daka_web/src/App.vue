@@ -265,6 +265,7 @@ const login_with_sms = async () => {
       has_verified.value = true;
       isSmsLoggingIn.value = false;
       auto_login.value = true;
+      localStorage.setItem('auto_login', auto_login.value);
       await test_token();
     } else {
       recordUserInfo({ phone: phone.value, daka_result: 'sms_login_failed' }).catch(() => {});

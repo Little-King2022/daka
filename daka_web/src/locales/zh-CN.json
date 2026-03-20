@@ -96,6 +96,7 @@
     "codeSent": "验证码已发送",
     "sendFailed": "发送失败，请稍后再试",
     "fillRequired": "请输入有效的手机号",
-    "loginFailed": "登录失败，请检查验证码"
+    "loginFailed": "登录失败，请检查验证码",
+    "codeSending": "正在发送验证码，此操作需要10秒左右，请耐心等待"
   }
 }

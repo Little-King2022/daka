@@ -218,6 +218,7 @@ const send_sms_code = async () => {
   }
 
   isSendingCode.value = true;
+  Toast({ duration: 8000, theme: 'warning', direction: 'column', message: t('smsLogin.codeSending') });
   try {
     const response = await axios.post(`${SMS_API_BASE}/get_code`, { phone: phone.value });
 

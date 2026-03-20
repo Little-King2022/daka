@@ -96,6 +96,7 @@
     "codeSent": "Verification code sent, please check your phone",
     "sendFailed": "Failed to send, please try again later",
     "fillRequired": "Please enter your phone number and verification code",
-    "loginFailed": "Login failed, please check your verification code"
+    "loginFailed": "Login failed, please check your verification code",
+    "codeSending": "Verification code is sending, this operation will take about 10 seconds"
   }
 }

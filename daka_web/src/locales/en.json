@@ -78,7 +78,7 @@
   },
   "hints": {
     "avoidRepeat": "Please do not click repeatedly to avoid duplicate check-ins.",
-    "timeRestricted": "One-click check-in is only available after 9:00 AM."
+    "timeRestricted": "One-click check-in is only available after 8:30 AM."
   },
   "settings": {
     "autoLogin": "Auto login next time"

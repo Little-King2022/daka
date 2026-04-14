@@ -82,8 +82,9 @@ onBeforeUnmount(() => {
 });
 
 const isTimeRestricted = computed(() => {
-  const hour = new Date().getHours();
-  return hour >= 1 && hour < 9;
+  const now = new Date();
+  const totalMinutes = now.getHours() * 60 + now.getMinutes();
+  return totalMinutes >= 2 * 60 && totalMinutes < 8 * 60 + 30;
 });
 
 const checkInButtonText = computed(() => {

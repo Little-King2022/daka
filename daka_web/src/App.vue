@@ -81,6 +81,11 @@ onBeforeUnmount(() => {
   }
 });
 
+const isTimeRestricted = computed(() => {
+  const hour = new Date().getHours();
+  return hour >= 1 && hour < 9;
+});
+
 const checkInButtonText = computed(() => {
   const baseText = t('buttons.primaryCheckIn');
   if (cooldownRemaining.value > 0) {
@@ -395,7 +400,7 @@ const daka = async () => {
 };
 
 const handleDakaClick = async () => {
-  if (isCheckingIn.value || cooldownRemaining.value > 0) {
+  if (isCheckingIn.value || cooldownRemaining.value > 0 || isTimeRestricted.value) {
     return;
   }
 
@@ -761,12 +766,13 @@ if (localStorage.getItem('token')) {
         <t-button
           theme="primary"
           @click="handleDakaClick"
-          :disabled="isCheckingIn || cooldownRemaining > 0"
+          :disabled="isCheckingIn || cooldownRemaining > 0 || isTimeRestricted"
           :loading="isCheckingIn"
           style="font-size: 20px;letter-spacing: 3px;text-align: center;width: 70%;height: 60px;margin: 0 20px;box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);">
           {{ checkInButtonText }}
         </t-button>
       </div>
+      <div v-if="isTimeRestricted" style="text-align: center;font-size: small; color: red;margin-top: 10px;">{{ t('hints.timeRestricted') }}</div>
       <div style="text-align: center;font-size: small; color: grey;margin-top: 10px;">{{ t('hints.avoidRepeat') }}</div>
       <div style="text-align: center;font-size: small; color: grey;">{{ t('hints.learningOnly') }}</div>
     </div>

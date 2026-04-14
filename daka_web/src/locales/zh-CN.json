@@ -78,7 +78,8 @@
   },
   "hints": {
     "avoidRepeat": "请勿连续点击按钮，防止重复打卡",
-    "learningOnly": "仅供学习交流，请合理使用"
+    "learningOnly": "仅供学习交流，请合理使用",
+    "timeRestricted": "一键打卡仅支持 9:00 之后使用，请届时再试"
   },
   "settings": {
     "autoLogin": "下次自动登录"

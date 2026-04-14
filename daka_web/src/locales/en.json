@@ -78,7 +78,8 @@
   },
   "hints": {
     "avoidRepeat": "Please do not click repeatedly to avoid duplicate check-ins.",
-    "learningOnly": "For learning and communication only. Use responsibly."
+    "learningOnly": "For learning and communication only. Use responsibly.",
+    "timeRestricted": "One-click check-in is only available after 9:00 AM. Please try again then."
   },
   "settings": {
     "autoLogin": "Auto login next time"

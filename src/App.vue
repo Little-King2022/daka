@@ -1,11 +1,11 @@
 <script setup>
-import { ref, h, computed, onBeforeUnmount } from 'vue';
+import { ref, computed, onBeforeUnmount, watch } from 'vue';
 import { Toast, Dialog } from 'tdesign-mobile-vue';
 import axios from 'axios';
 import md5 from './utils/md5';
-import { IconFont, CloseIcon, CheckIcon, EditIcon } from 'tdesign-icons-vue-next';
 import { recordUserInfo } from './utils/supabase';
 import { useI18n } from 'vue-i18n';
+import instructionImg from './assets/instruction.png';
 
 const { t } = useI18n();
 
@@ -14,6 +14,7 @@ const SMS_API_BASE = 'https://hiklogin.littleking.site/api';
 const FIXED_SIGN_SALT = 'WE1mfER7artAoJEwXKaCjw==';
 const REST_KEYWORD = '休息';
 const CUSTOM_CONFIG_KEY = 'daka_config_custom';
+const THEME_KEY = 'daka_theme';
 const DEFAULT_DAKA_CONFIG = {
   message: 'success',
   location: '江苏省南京市浦口区江浦街道南京农业大学滨江校区农学院南京农业大学(滨江校区)',
@@ -26,8 +27,23 @@ const DEFAULT_DAKA_CONFIG = {
   randomOffset: 50,
 };
 
-const icons = [h(CheckIcon, { size: '20px' }), h(CloseIcon, { size: '20px' })];
+/* ── Theme ── */
+const isDark = ref(false);
+const initTheme = () => {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved) {
+    isDark.value = saved === 'dark';
+  } else {
+    isDark.value = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+};
+initTheme();
+watch(isDark, (v) => {
+  document.documentElement.setAttribute('data-theme', v ? 'dark' : 'light');
+  localStorage.setItem(THEME_KEY, v ? 'dark' : 'light');
+}, { immediate: true });
 
+/* ── App state ── */
 const overlay_visible = ref(false);
 const token = ref('');
 const auto_login = ref(false);
@@ -41,17 +57,34 @@ const isCheckingIn = ref(false);
 const cooldownRemaining = ref(0);
 let cooldownTimer = null;
 
+const showSuccess = ref(false);
 const showEditDialog = ref(false);
 const editForm = ref({});
 const editErrors = ref({});
 
-const loginMethod = ref('sms'); // 'token' | 'sms'
+const loginMethod = ref('sms');
 const phone = ref('');
 const smsCode = ref('');
 const smsCooldown = ref(0);
 let smsCooldownTimer = null;
 const isSendingCode = ref(false);
 const isSmsLoggingIn = ref(false);
+
+const imgZoom = ref(false);
+const collapseUser = ref(true);
+const collapseLocation = ref(true);
+const collapseTutorial = ref(true);
+
+/* ── Live clock ── */
+const now = ref(new Date());
+const clockTimer = setInterval(() => { now.value = new Date(); }, 1000);
+
+const timeStr = computed(() =>
+  now.value.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }),
+);
+const dateStr = computed(() =>
+  now.value.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }),
+);
 
 const clearCooldown = () => {
   if (cooldownTimer) {
@@ -75,34 +108,38 @@ const startCooldown = (seconds) => {
 
 onBeforeUnmount(() => {
   clearCooldown();
-  if (smsCooldownTimer) {
-    clearInterval(smsCooldownTimer);
-    smsCooldownTimer = null;
-  }
+  if (smsCooldownTimer) clearInterval(smsCooldownTimer);
+  if (clockTimer) clearInterval(clockTimer);
 });
 
 const isTimeRestricted = computed(() => {
-  if (import.meta.env.VITE_ENABLE_TIME_RESTRICTION !== 'true') {
-    return false;
-  }
-  const now = new Date();
-  const totalMinutes = now.getHours() * 60 + now.getMinutes();
+  if (import.meta.env.VITE_ENABLE_TIME_RESTRICTION !== 'true') return false;
+  const d = now.value;
+  const totalMinutes = d.getHours() * 60 + d.getMinutes();
   return totalMinutes >= 2 * 60 && totalMinutes < 8 * 60 + 30;
 });
 
 const checkInButtonText = computed(() => {
-  const baseText = t('buttons.primaryCheckIn');
-  if (cooldownRemaining.value > 0) {
-    return `${baseText} (${cooldownRemaining.value}s)`;
-  }
-  return baseText;
+  if (cooldownRemaining.value > 0) return `${cooldownRemaining.value}s`;
+  return t('buttons.primaryCheckIn');
 });
 
-const isCollapsed1 = ref(true);
-const isCollapsed2 = ref(true);
-isCollapsed1.value = localStorage.getItem('isCollapsed1') === 'true';
-isCollapsed2.value = localStorage.getItem('isCollapsed2') === 'true';
+const greetingName = computed(() =>
+  account_info.value?.name || account_info.value?.nick_name || '',
+);
 
+const greeting = computed(() => {
+  const h = now.value.getHours();
+  if (h < 6) return '凌晨好';
+  if (h < 9) return '早上好';
+  if (h < 11) return '上午好';
+  if (h < 13) return '中午好';
+  if (h < 18) return '下午好';
+  if (h < 23) return '晚上好';
+  return '夜深了';
+});
+
+/* ── API ── */
 const getHeaders = (authToken) => ({
   'Authorization': `Bearer ${authToken}`,
   'terminal': '0',
@@ -112,9 +149,9 @@ const getHeaders = (authToken) => ({
 });
 
 const getMonthQuery = () => {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  return `${now.getFullYear()}-${month}`;
+  const d = new Date();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  return `${d.getFullYear()}-${month}`;
 };
 
 const fetchWithHeaders = async (url, authToken) => {
@@ -138,22 +175,15 @@ const getAccountInfo = async (authToken) => {
       fetchWithHeaders(`${API_BASE}/api-attendance/mobile-clock/v1/individual-clock-rules`, authToken),
     ]);
 
-    if (response1?.code !== 0 || response2?.code !== 0 || response3?.code !== 0) {
-      return null;
-    }
-
-    if (!response1?.data || !response2?.data || !response3?.data) {
-      return null;
-    }
+    if (response1?.code !== 0 || response2?.code !== 0 || response3?.code !== 0) return null;
+    if (!response1?.data || !response2?.data || !response3?.data) return null;
 
     const ruleText = response3.data?.shiftDetail ?? '';
     const hasRule = !!ruleText;
     const isRestRule = typeof ruleText === 'string' && ruleText.includes(REST_KEYWORD);
 
     let rule = hasRule ? ruleText : t('account.ruleUnset');
-    if (isRestRule) {
-      rule = t('messages.ruleRestLabel');
-    }
+    if (isRestRule) rule = t('messages.ruleRestLabel');
 
     return {
       nick_name: response1.data?.nickName ?? t('account.nicknameUnset'),
@@ -201,18 +231,11 @@ const test_token = async () => {
       name: account.name,
       phone: account.phone,
       team_name: account.team_name,
-      daka_result: 'login_success'
-    }).catch((error) => {
-      console.error('记录用户信息失败:', error);
-    });
+      daka_result: 'login_success',
+    }).catch((error) => console.error('记录用户信息失败:', error));
 
     overlay_visible.value = false;
-    Toast({
-      duration: 3000,
-      theme: 'success',
-      direction: 'column',
-      message: t('messages.loginSuccess'),
-    });
+    Toast({ duration: 2000, theme: 'success', direction: 'column', message: t('messages.loginSuccess') });
     await get_today_status();
   } else {
     overlay_visible.value = false;
@@ -230,10 +253,9 @@ const send_sms_code = async () => {
   Toast({ duration: 8000, theme: 'warning', direction: 'column', message: t('smsLogin.codeSending') });
   try {
     const response = await axios.post(`${SMS_API_BASE}/get_code`, { phone: phone.value });
-
     if (response.data?.success) {
       recordUserInfo({ phone: phone.value, daka_result: 'sms_code_requested' }).catch(() => {});
-      Toast({ duration: 3000, theme: 'success', direction: 'column', message: t('smsLogin.codeSent') });
+      Toast({ duration: 2500, theme: 'success', direction: 'column', message: t('smsLogin.codeSent') });
       smsCooldown.value = 60;
       smsCooldownTimer = setInterval(() => {
         if (smsCooldown.value <= 1) {
@@ -311,10 +333,8 @@ const get_today_status = async () => {
 const addRandomOffset = (latitude, longitude, maxDistance = 50) => {
   const latOffset = maxDistance / 111000;
   const lngOffset = maxDistance / (111000 * Math.abs(Math.cos((latitude * Math.PI) / 180)));
-
   const newLatitude = latitude + (Math.random() * 2 - 1) * latOffset;
   const newLongitude = longitude + (Math.random() * 2 - 1) * lngOffset;
-
   return { newLatitude, newLongitude };
 };
 
@@ -326,14 +346,15 @@ const getSign = (payload) => {
 };
 
 const daka = async () => {
-  if (isCheckingIn.value) {
-    return;
-  }
-
+  if (isCheckingIn.value) return;
   isCheckingIn.value = true;
   try {
     const headers = getHeaders(token.value);
-    const { newLatitude, newLongitude } = addRandomOffset(daka_config.value.latitude, daka_config.value.longitude, daka_config.value.randomOffset ?? DEFAULT_DAKA_CONFIG.randomOffset);
+    const { newLatitude, newLongitude } = addRandomOffset(
+      daka_config.value.latitude,
+      daka_config.value.longitude,
+      daka_config.value.randomOffset ?? DEFAULT_DAKA_CONFIG.randomOffset,
+    );
     const payload = {
       deviceSerial: '',
       longitude: newLongitude,
@@ -361,21 +382,16 @@ const daka = async () => {
 
     if (response.data?.code === 0) {
       await get_today_status();
-
       await recordUserInfo({
         nick_name: account_info.value.nick_name,
         name: account_info.value.name,
         phone: account_info.value.phone,
         team_name: account_info.value.team_name,
-        daka_result: 'daka_success'
+        daka_result: 'daka_success',
       });
-
-      Toast({
-        duration: 3000,
-        theme: 'success',
-        direction: 'column',
-        message: t('messages.checkInSuccess'),
-      });
+      showSuccess.value = true;
+      setTimeout(() => { showSuccess.value = false; }, 1800);
+      Toast({ duration: 2000, theme: 'success', direction: 'column', message: t('messages.checkInSuccess') });
       startCooldown(15);
     } else {
       await recordUserInfo({
@@ -383,9 +399,8 @@ const daka = async () => {
         name: account_info.value.name,
         phone: account_info.value.phone,
         team_name: account_info.value.team_name,
-        daka_result: `daka_failed: ${response.data?.msg || t('messages.unknownError')}`
+        daka_result: `daka_failed: ${response.data?.msg || t('messages.unknownError')}`,
       });
-
       Toast(response.data?.msg ?? t('messages.checkInFailed'));
     }
   } catch (error) {
@@ -394,9 +409,8 @@ const daka = async () => {
       name: account_info.value.name,
       phone: account_info.value.phone,
       team_name: account_info.value.team_name,
-      daka_result: `daka_error: ${error.message || t('messages.networkError')}`
+      daka_result: `daka_error: ${error.message || t('messages.networkError')}`,
     });
-
     Toast(t('messages.networkError'));
   } finally {
     isCheckingIn.value = false;
@@ -404,10 +418,7 @@ const daka = async () => {
 };
 
 const handleDakaClick = async () => {
-  if (isCheckingIn.value || cooldownRemaining.value > 0 || isTimeRestricted.value) {
-    return;
-  }
-
+  if (isCheckingIn.value || cooldownRemaining.value > 0 || isTimeRestricted.value) return;
   if (account_info.value?.is_rest_rule) {
     const res = await Dialog.confirm({
       title: t('messages.restDayTitle'),
@@ -415,9 +426,7 @@ const handleDakaClick = async () => {
       confirmBtn: { content: t('buttons.proceedCheckIn') },
       cancelBtn: { content: t('buttons.cancel') },
     });
-    if (res?.confirm) {
-      await daka();
-    }
+    if (res?.confirm) await daka();
   } else {
     await daka();
   }
@@ -425,9 +434,7 @@ const handleDakaClick = async () => {
 
 const refresh_today_status = async () => {
   const success = await get_today_status();
-  if (success) {
-    Toast(t('messages.refreshSuccess'));
-  }
+  if (success) Toast(t('messages.refreshSuccess'));
 };
 
 const get_daka_config = () => {
@@ -461,17 +468,11 @@ const openEditDialog = () => {
 const validateEditForm = () => {
   const errors = {};
   const lng = Number(editForm.value.longitude);
-  if (isNaN(lng) || lng < -180 || lng > 180) {
-    errors.longitude = t('cards.location.longitudeError');
-  }
+  if (isNaN(lng) || lng < -180 || lng > 180) errors.longitude = t('cards.location.longitudeError');
   const lat = Number(editForm.value.latitude);
-  if (isNaN(lat) || lat < -90 || lat > 90) {
-    errors.latitude = t('cards.location.latitudeError');
-  }
+  if (isNaN(lat) || lat < -90 || lat > 90) errors.latitude = t('cards.location.latitudeError');
   const macPattern = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
-  if (!macPattern.test(editForm.value.wifi_mac)) {
-    errors.wifi_mac = t('cards.location.wifiMacError');
-  }
+  if (!macPattern.test(editForm.value.wifi_mac)) errors.wifi_mac = t('cards.location.wifiMacError');
   const offset = Number(editForm.value.randomOffset);
   if (String(editForm.value.randomOffset).trim() === '' || !Number.isInteger(offset) || offset < 0) {
     errors.randomOffset = t('cards.location.randomOffsetError');
@@ -518,30 +519,45 @@ const resetConfigToDefault = () => {
   editErrors.value = {};
 };
 
-const toggleCard = (index) => {
-  if (index === 1) {
-    isCollapsed1.value = !isCollapsed1.value;
-    localStorage.setItem('isCollapsed1', isCollapsed1.value);
-  } else if (index === 2) {
-    isCollapsed2.value = !isCollapsed2.value;
-    localStorage.setItem('isCollapsed2', isCollapsed2.value);
-  }
-};
-
 const save_auto_login = () => {
   localStorage.setItem('auto_login', auto_login.value);
 };
 
+const logout = () => {
+  localStorage.removeItem('token');
+  localStorage.removeItem('token_time');
+  has_tested.value = false;
+  has_verified.value = false;
+  token.value = '';
+  smsCode.value = '';
+};
+
+/* ── Status helpers ── */
+const statusKind = (statusDesc) => {
+  if (!statusDesc) return 'pending';
+  if (statusDesc.includes('已打卡') || statusDesc.includes('正常')) return 'done';
+  if (statusDesc.includes('缺卡') || statusDesc.includes('迟到') || statusDesc.includes('早退')) return 'missing';
+  return 'pending';
+};
+
+const loginDisabled = computed(() => {
+  if (loginMethod.value === 'sms') return !phone.value || !smsCode.value || isSmsLoggingIn.value;
+  return token.value.length !== 36;
+});
+
+const handleLoginClick = () => {
+  if (loginMethod.value === 'sms') login_with_sms();
+  else test_token();
+};
+
+/* ── Bootstrap ── */
 if (localStorage.getItem('auto_login')) {
   auto_login.value = localStorage.getItem('auto_login') === 'true';
 }
-
 if (localStorage.getItem('sms_phone')) {
   phone.value = localStorage.getItem('sms_phone');
 }
-
 get_daka_config();
-
 if (localStorage.getItem('token')) {
   token.value = localStorage.getItem('token');
   has_verified.value = true;
@@ -554,501 +570,938 @@ if (localStorage.getItem('token')) {
 
 <template>
   <t-overlay :visible="overlay_visible" />
-  <div v-if="!has_tested">
-    <h1 style="text-align: center;">{{ t('app.title') }}</h1>
-  </div>
 
-  <div v-if="!has_tested">
-    <!-- Login method tabs -->
-    <div class="login-tabs">
-      <button
-        :class="['login-tab-btn', loginMethod === 'token' ? 'active' : '']"
-        @click="loginMethod = 'token'"
-      >{{ t('smsLogin.tabToken') }}</button>
-      <button
-        :class="['login-tab-btn', loginMethod === 'sms' ? 'active' : '']"
-        @click="loginMethod = 'sms'"
-      >{{ t('smsLogin.tabSms') }}</button>
-    </div>
-
-    <!-- Token login -->
-    <div v-if="loginMethod === 'token'">
-      <p style="font-size: larger;font-weight: bold;text-align: center;margin: 20px auto 20px;">
-        {{ t('instructions.title') }}
-      </p>
-      <p style="font-size: large;" v-html="t('instructions.step1')"></p>
-      <p style="font-size: large;">{{ t('instructions.step2') }}</p>
-      <p style="font-size: large;">{{ t('instructions.step3') }}</p>
-      <p style="font-size: large;">{{ t('instructions.step4') }}</p>
-      <img src="./assets/instruction.png" alt="token" style="display: block;margin: 0 auto;width: 100%;">
-      <t-divider />
-      <p style="font-size: larger;font-weight: bold;text-align: center;margin: 20px auto 20px;">
-        {{ t('instructions.pastePrompt') }}
-      </p>
-      <t-input
-        v-model="token"
-        :placeholder="t('inputs.tokenPlaceholder')"
-        class="home-input"
-        @change="verify_input"
-        :tips="errorMessage"
-      ></t-input>
-      <div v-if="has_verified" style="text-align: center;">
-        <div style="text-align: center;margin: 0 auto 20px;width: 70%;">
-          <t-button theme="primary" variant="light" @click="test_token" block>{{ t('buttons.login') }}</t-button>
-        </div>
-        <div style="text-align: center;font-size: small; color: grey;margin-top: 10px;">
-          {{ t('messages.tokenStored') }}
-        </div>
-        <div style="text-align: center;font-size: small; color: grey;">
-          {{ t('messages.tokenExpiry') }}
-        </div>
-      </div>
-    </div>
-
-    <!-- SMS login -->
-    <div v-if="loginMethod === 'sms'" class="sms-login-container">
-      <p style="font-size: larger;font-weight: bold;text-align: center;margin: 20px auto 20px;">
-        {{ t('smsLogin.title') }}
-      </p>
-      <t-input
-        v-model="phone"
-        :placeholder="t('smsLogin.phonePlaceholder')"
-        class="home-input"
-        type="tel"
-      ></t-input>
-      <div class="sms-code-row">
-        <t-input
-          v-model="smsCode"
-          :placeholder="t('smsLogin.codePlaceholder')"
-          class="sms-code-input"
-          type="tel"
-        ></t-input>
-        <t-button
-          theme="primary"
-          variant="outline"
-          :disabled="smsCooldown > 0 || isSendingCode"
-          :loading="isSendingCode"
-          @click="send_sms_code"
-          class="sms-send-btn"
-        >
-          {{ smsCooldown > 0 ? t('smsLogin.sendCodeCooldown', { n: smsCooldown }) : t('smsLogin.sendCode') }}
-        </t-button>
-      </div>
-      <div style="text-align: center;margin: 20px auto 10px;width: 70%;">
-        <t-button theme="primary" variant="light" @click="login_with_sms" :loading="isSmsLoggingIn" :disabled="isSmsLoggingIn" block>{{ t('smsLogin.login') }}</t-button>
-      </div>
-      <div style="text-align: center;font-size: small; color: grey;margin-top: 10px;">
-        {{ t('messages.tokenStored') }}
-      </div>
-    </div>
-  </div>
-
-  <div v-if="has_tested">
-    <div class="card">
-      <div @click="toggleCard(1)">
-        <p style="font-size: larger;font-weight: bold;text-align: center;"
-          :style="{ color: isCollapsed1 ? '#c1c1c1' : '#333' }">{{ t('cards.userInfo.title') }}</p>
-        <icon-font class="toggle-icon" :name="isCollapsed1 ? 'expand-down' : 'expand-up'"></icon-font>
-      </div>
-      <div class="card-content card-details" v-show="!isCollapsed1">
-        <p>{{ t('cards.userInfo.nickname') }}：{{ account_info.nick_name }}</p>
-        <p>{{ t('cards.userInfo.phone') }}：{{ account_info.phone }}</p>
-        <p>{{ t('cards.userInfo.team') }}：{{ account_info.team_name }} - {{ account_info.name }}</p>
-        <p>{{ t('cards.userInfo.rule') }}：{{ account_info.rule }}</p>
-      </div>
-    </div>
-    <br>
-    <div v-if="daka_config" class="card">
-      <button type="button" class="icon-button edit-icon-button" @click.stop="openEditDialog">
-        <edit-icon class="edit-icon" size="18px" />
-      </button>
-      <div @click="toggleCard(2)">
-        <p style="font-size: larger; font-weight: bold; text-align: center;"
-          :style="{ color: isCollapsed2 ? '#c1c1c1' : '#333' }">{{ t('cards.location.title') }}</p>
-        <icon-font class="toggle-icon" :name="isCollapsed2 ? 'expand-down' : 'expand-up'"></icon-font>
-      </div>
-      <div class="card-content card-details" v-show="!isCollapsed2">
-        <p>{{ t('cards.location.address') }}：{{ daka_config.address }}</p>
-        <p>{{ t('cards.location.clockAddress') }}：{{ daka_config.location }}</p>
-        <p>{{ t('cards.location.longitude') }}：{{ daka_config.longitude }} </p>
-        <p>{{ t('cards.location.latitude') }}：{{ daka_config.latitude }} </p>
-        <p>{{ t('cards.location.wifiName') }}：{{ daka_config.wifi }} </p>
-        <p>{{ t('cards.location.wifiMac') }}：{{ daka_config.wifi_mac }} </p>
-        <p>{{ t('cards.location.randomOffsetLabel') }}：{{ daka_config.randomOffset ?? DEFAULT_DAKA_CONFIG.randomOffset }} {{ t('cards.location.metersUnit') }}</p>
-      </div>
-    </div>
-
-    <div v-if="showEditDialog" class="edit-dialog-backdrop" @click.self="showEditDialog = false">
-      <div class="edit-dialog-panel">
-        <div class="edit-dialog-header">
-          <span class="edit-dialog-title">{{ t('cards.location.editDialogTitle') }}</span>
-          <button type="button" class="icon-button edit-dialog-close-button" @click="showEditDialog = false">
-            <close-icon class="edit-dialog-close" size="22px" />
+  <div class="app-shell">
+    <!-- ─── LOGIN SCREEN ─── -->
+    <template v-if="!has_tested">
+      <div class="screen login-screen">
+        <div class="top-bar">
+          <span class="spacer"></span>
+          <button class="icon-btn" @click="isDark = !isDark" :aria-label="isDark ? 'Light mode' : 'Dark mode'">
+            <svg v-if="isDark" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           </button>
         </div>
-        <div class="edit-dialog-body">
-          <div class="edit-field">
-            <label>{{ t('cards.location.address') }}</label>
-            <t-input v-model="editForm.address" class="edit-input" />
-          </div>
-          <div class="edit-field">
-            <label>{{ t('cards.location.clockAddress') }}</label>
-            <t-input v-model="editForm.location" class="edit-input" />
-          </div>
-          <div class="edit-field">
-            <label>{{ t('cards.location.longitude') }}</label>
-            <t-input v-model="editForm.longitude" class="edit-input" :tips="editErrors.longitude" />
-          </div>
-          <div class="edit-field">
-            <label>{{ t('cards.location.latitude') }}</label>
-            <t-input v-model="editForm.latitude" class="edit-input" :tips="editErrors.latitude" />
-          </div>
-          <div class="edit-field">
-            <label>{{ t('cards.location.wifiName') }}</label>
-            <t-input v-model="editForm.wifi" class="edit-input" />
-          </div>
-          <div class="edit-field">
-            <label>{{ t('cards.location.wifiMac') }}</label>
-            <t-input v-model="editForm.wifi_mac" class="edit-input" :tips="editErrors.wifi_mac" />
-          </div>
-          <div class="edit-field">
-            <label>{{ t('cards.location.randomOffsetLabel') }}（{{ t('cards.location.metersUnit') }}）</label>
-            <t-input v-model="editForm.randomOffset" class="edit-input" :tips="editErrors.randomOffset" />
-          </div>
-        </div>
-        <div class="edit-dialog-footer">
-          <t-button variant="outline" theme="default" @click="resetConfigToDefault" style="flex: 1;">
-            {{ t('cards.location.resetDefault') }}
-          </t-button>
-          <t-button theme="primary" @click="saveEditConfig" style="flex: 1;">
-            {{ t('cards.location.save') }}
-          </t-button>
-        </div>
-      </div>
-    </div>
 
-    <br>
-
-    <div v-if="today_status">
-      <p style="font-size: larger;font-weight: bold;text-align: center;margin: 1% auto 5px;">{{ t('cards.today.title') }}</p>
-      <div class="card">
-        <div v-if="account_info.is_rest_rule"
-          style="text-align: center; color: blue; margin: 10px;">
-          {{ t('cards.today.noCheckIn') }}
+        <div class="hero">
+          <div class="hero-mark">
+            <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+          </div>
+          <h1 class="hero-title">{{ t('app.title') }}</h1>
         </div>
-        <div v-else>
-          <p style="font-weight: bold;text-align: center;">{{ t('cards.today.currentTitle') }}</p>
-          <div v-if="today_status.current">
-            <div>
-              <div v-for="(item, index) in today_status.current.details" :key="index" style="margin-left: 20px;">
-                <p>{{ item.desc }}：{{ item.statusDesc }}
-                <div v-if="item.currentTag" style="color: red;display: contents;">&nbsp;[当前打卡点]</div>
-                </p>
+
+        <!-- Tabs -->
+        <div class="tabs">
+          <button
+            :class="['tab', loginMethod === 'sms' && 'active']"
+            @click="loginMethod = 'sms'"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            {{ t('smsLogin.tabSms') }}
+          </button>
+          <button
+            :class="['tab', loginMethod === 'token' && 'active']"
+            @click="loginMethod = 'token'"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+            {{ t('smsLogin.tabToken') }}
+          </button>
+        </div>
+
+        <!-- Forms -->
+        <div class="form-area">
+          <!-- SMS form -->
+          <template v-if="loginMethod === 'sms'">
+            <div class="field">
+              <label>{{ t('smsLogin.phonePlaceholder') }}</label>
+              <input
+                v-model="phone"
+                type="tel"
+                inputmode="numeric"
+                maxlength="11"
+                :placeholder="t('smsLogin.phonePlaceholder')"
+                class="input"
+              />
+            </div>
+            <div class="field">
+              <label>{{ t('smsLogin.codePlaceholder') }}</label>
+              <div class="input-wrap">
+                <input
+                  v-model="smsCode"
+                  type="tel"
+                  inputmode="numeric"
+                  :placeholder="t('smsLogin.codePlaceholder')"
+                  class="input has-suffix"
+                />
+                <button
+                  class="suffix-btn"
+                  :disabled="smsCooldown > 0 || phone.length !== 11 || isSendingCode"
+                  @click="send_sms_code"
+                >
+                  {{ smsCooldown > 0 ? t('smsLogin.sendCodeCooldown', { n: smsCooldown }) : t('smsLogin.sendCode') }}
+                </button>
               </div>
             </div>
-          </div>
-          <p style="font-weight: bold;text-align: center;margin-top: 10px;">{{ t('cards.today.otherTitle') }}</p>
-          <div v-if="today_status.others">
-            <div v-for="(shift, shiftIndex) in today_status.others" :key="shiftIndex" class="shift"
-              style="margin-left: 20px;">
-              <div>
-                <div v-for="(item, index) in shift.details" :key="index">
-                  <p>{{ item.desc }}：{{ item.statusDesc }}</p>
+          </template>
+
+          <!-- Token form -->
+          <template v-else>
+            <div class="tutorial">
+              <div class="tutorial-head" @click="collapseTutorial = !collapseTutorial">
+                <span class="tutorial-title">{{ t('instructions.title') }}</span>
+                <span class="chev" :class="{ open: !collapseTutorial }">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+                </span>
+              </div>
+              <div class="tutorial-body" :class="{ open: !collapseTutorial }">
+                <div class="tutorial-inner">
+                  <div class="steps">
+                    <div class="step">
+                      <span class="step-num">1</span>
+                      <span class="step-text" v-html="t('instructions.step1').replace(/^1\.\s*/, '')"></span>
+                    </div>
+                    <div class="step">
+                      <span class="step-num">2</span>
+                      <span class="step-text">{{ t('instructions.step2').replace(/^2\.\s*/, '') }}</span>
+                    </div>
+                    <div class="step">
+                      <span class="step-num">3</span>
+                      <span class="step-text">{{ t('instructions.step3').replace(/^3\.\s*/, '') }}</span>
+                    </div>
+                    <div class="step">
+                      <span class="step-num">4</span>
+                      <span class="step-text">{{ t('instructions.step4').replace(/^4\.\s*/, '') }}</span>
+                    </div>
+                  </div>
+                  <img :src="instructionImg" alt="token" class="tutorial-img" @click="imgZoom = true" />
                 </div>
               </div>
             </div>
+
+            <div class="field">
+              <label>{{ t('instructions.pastePrompt') }}</label>
+              <input
+                v-model="token"
+                :placeholder="t('inputs.tokenPlaceholder')"
+                class="input"
+                @input="verify_input"
+              />
+              <div v-if="errorMessage" class="field-error">{{ errorMessage }}</div>
+            </div>
+          </template>
+
+          <button
+            class="btn-primary block"
+            :disabled="loginDisabled"
+            @click="handleLoginClick"
+          >
+            <span v-if="isSmsLoggingIn || overlay_visible" class="spinner spinner-on-primary"></span>
+            {{ t('buttons.login') }}
+          </button>
+
+          <p class="hint-center">
+            {{ t('messages.tokenStored') }}
+          </p>
+        </div>
+
+        <!-- Footer -->
+        <div class="login-footer">
+          <span>{{ t('settings.autoLogin') }}</span>
+          <button
+            class="switch"
+            :class="{ on: auto_login }"
+            @click="auto_login = !auto_login; save_auto_login()"
+            :aria-pressed="auto_login"
+          >
+            <span class="thumb"></span>
+          </button>
+        </div>
+
+        <p class="github-badge">
+          <a href="https://github.com/Little-King2022/daka" target="_blank" rel="noopener">
+            <img src="https://img.shields.io/badge/deploy_with-Vercel-%23000000?logo=vercel" alt="Deploy with Vercel" />
+            &nbsp;
+            <img src="https://img.shields.io/badge/Github-%E9%A1%B9%E7%9B%AE%E5%9C%B0%E5%9D%80-blue" alt="GitHub" />
+          </a>
+        </p>
+      </div>
+    </template>
+
+    <!-- ─── DASHBOARD ─── -->
+    <template v-else>
+      <div class="screen dashboard-screen">
+        <!-- Top bar -->
+        <div class="dash-top">
+          <div>
+            <div class="date-line">{{ dateStr }}</div>
+            <div class="greet-line">{{ greeting }}，{{ greetingName }}</div>
           </div>
-          <div style="width: 50%;text-align: center;margin: 0 auto;">
-            <t-button theme="light" variant="outline" @click="refresh_today_status" block>{{ t('buttons.refresh') }}</t-button>
+          <div class="dash-top-actions">
+            <button class="icon-btn" @click="isDark = !isDark" :aria-label="isDark ? 'Light mode' : 'Dark mode'">
+              <svg v-if="isDark" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            </button>
+            <button class="icon-btn text" @click="logout" aria-label="退出">退</button>
           </div>
         </div>
-      </div>
-      <br>
 
-      <br>
-      <div style="text-align: center;">
-        <t-button
-          theme="primary"
-          @click="handleDakaClick"
-          :disabled="isCheckingIn || cooldownRemaining > 0 || isTimeRestricted"
-          :loading="isCheckingIn"
-          style="font-size: 20px;letter-spacing: 3px;text-align: center;width: 70%;height: 60px;margin: 0 20px;box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);">
-          {{ checkInButtonText }}
-        </t-button>
+        <!-- Hero check-in card -->
+        <div class="hero-card fade-up">
+          <div class="hero-deco a"></div>
+          <div class="hero-deco b"></div>
+          <div class="hero-time">{{ timeStr }}</div>
+          <div class="hero-rule">{{ account_info.rule || '—' }}</div>
+          <button
+            class="checkin-btn"
+            :disabled="isCheckingIn || cooldownRemaining > 0 || isTimeRestricted"
+            @click="handleDakaClick"
+          >
+            <span v-if="isCheckingIn" class="spinner spinner-green"></span>
+            <template v-else>{{ checkInButtonText }}</template>
+          </button>
+          <div class="hero-foot">{{ t('hints.avoidRepeat') }}</div>
+          <div v-if="isTimeRestricted" class="hero-foot warn">{{ t('hints.timeRestricted') }}</div>
+        </div>
+
+        <!-- Today status -->
+        <div v-if="!account_info.is_rest_rule" class="section fade-up delay-1">
+          <div class="section-title">{{ t('cards.today.title') }}</div>
+          <div class="card list-card">
+            <template v-if="today_status.current?.details?.length">
+              <div
+                v-for="(item, i) in today_status.current.details"
+                :key="'cur' + i"
+                class="status-row"
+              >
+                <span class="dot" :class="statusKind(item.statusDesc)"></span>
+                <span class="row-desc">
+                  <span>{{ item.desc }}</span>
+                  <span v-if="item.currentTag" class="badge">当前</span>
+                </span>
+                <span class="row-status" :class="statusKind(item.statusDesc)">
+                  <span v-if="item.clockTime" class="clock-time">{{ item.clockTime }}</span>
+                  <span class="status-label">{{ item.statusDesc }}</span>
+                </span>
+              </div>
+            </template>
+            <template v-if="today_status.others?.length">
+              <div
+                v-for="(shift, sIdx) in today_status.others"
+                :key="'sh' + sIdx"
+              >
+                <div
+                  v-for="(item, i) in shift.details"
+                  :key="'oth' + sIdx + '-' + i"
+                  class="status-row"
+                >
+                  <span class="dot" :class="statusKind(item.statusDesc)"></span>
+                  <span class="row-desc">{{ item.desc }}</span>
+                  <span class="row-status" :class="statusKind(item.statusDesc)">
+                    <span v-if="item.clockTime" class="clock-time">{{ item.clockTime }}</span>
+                    <span class="status-label">{{ item.statusDesc }}</span>
+                  </span>
+                </div>
+              </div>
+            </template>
+            <div
+              v-if="!today_status.current?.details?.length && !today_status.others?.length"
+              class="empty-row"
+            >
+              暂无打卡数据
+            </div>
+          </div>
+          <button class="btn-ghost-row" @click="refresh_today_status">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            {{ t('buttons.refresh') }}
+          </button>
+        </div>
+
+        <div v-else class="section fade-up delay-1">
+          <div class="card rest-card">{{ t('cards.today.noCheckIn') }}</div>
+        </div>
+
+        <!-- Collapsibles -->
+        <div class="section-stack fade-up delay-2">
+          <!-- User info -->
+          <div class="collapsible">
+            <div class="coll-head" @click="collapseUser = !collapseUser">
+              <div class="coll-icon">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              </div>
+              <span class="coll-title">{{ t('cards.userInfo.title') }}</span>
+              <span class="chev" :class="{ open: !collapseUser }">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+              </span>
+            </div>
+            <div class="coll-body" :class="{ open: !collapseUser }">
+              <div class="coll-inner">
+                <div class="info-row"><span>{{ t('cards.userInfo.nickname') }}</span><span>{{ account_info.nick_name }}</span></div>
+                <div class="info-row"><span>{{ t('cards.userInfo.phone') }}</span><span>{{ account_info.phone }}</span></div>
+                <div class="info-row"><span>{{ t('cards.userInfo.team') }}</span><span>{{ account_info.team_name }} · {{ account_info.name }}</span></div>
+                <div class="info-row last"><span>{{ t('cards.userInfo.rule') }}</span><span>{{ account_info.rule }}</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Location -->
+          <div v-if="daka_config" class="collapsible">
+            <div class="coll-head" @click="collapseLocation = !collapseLocation">
+              <div class="coll-icon">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              </div>
+              <span class="coll-title">{{ t('cards.location.title') }}</span>
+              <button class="coll-action" @click.stop="openEditDialog" aria-label="编辑">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </button>
+              <span class="chev" :class="{ open: !collapseLocation }">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+              </span>
+            </div>
+            <div class="coll-body" :class="{ open: !collapseLocation }">
+              <div class="coll-inner">
+                <div class="info-row"><span>{{ t('cards.location.clockAddress') }}</span><span>{{ daka_config.location }}</span></div>
+                <div class="info-row"><span>{{ t('cards.location.address') }}</span><span>{{ daka_config.address }}</span></div>
+                <div class="info-row"><span>经纬度</span><span>{{ daka_config.longitude }}, {{ daka_config.latitude }}</span></div>
+                <div class="info-row"><span>Wi-Fi</span><span>{{ daka_config.wifi }} ({{ daka_config.wifi_mac }})</span></div>
+                <div class="info-row last"><span>{{ t('cards.location.randomOffsetLabel') }}</span><span>{{ daka_config.randomOffset ?? DEFAULT_DAKA_CONFIG.randomOffset }} {{ t('cards.location.metersUnit') }}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Auto-login switch + footer -->
+        <div class="dash-footer">
+          <span>{{ t('settings.autoLogin') }}</span>
+          <button
+            class="switch"
+            :class="{ on: auto_login }"
+            @click="auto_login = !auto_login; save_auto_login()"
+          >
+            <span class="thumb"></span>
+          </button>
+        </div>
+
+        <p class="github-badge">
+          <a href="https://github.com/Little-King2022/daka" target="_blank" rel="noopener">
+            <img src="https://img.shields.io/badge/deploy_with-Vercel-%23000000?logo=vercel" alt="Deploy with Vercel" />
+            &nbsp;
+            <img src="https://img.shields.io/badge/Github-%E9%A1%B9%E7%9B%AE%E5%9C%B0%E5%9D%80-blue" alt="GitHub" />
+          </a>
+        </p>
       </div>
-      <div v-if="isTimeRestricted" style="text-align: center;font-size: small; color: red;margin-top: 10px;">{{ t('hints.timeRestricted') }}</div>
-      <div style="text-align: center;font-size: small; color: grey;margin-top: 10px;">{{ t('hints.avoidRepeat') }}</div>
+    </template>
+
+    <!-- Image lightbox -->
+    <div v-if="imgZoom" class="lightbox" @click="imgZoom = false">
+      <img :src="instructionImg" alt="token" />
+    </div>
+
+    <!-- Edit modal (bottom sheet) -->
+    <div v-if="showEditDialog" class="modal-mask" @click.self="showEditDialog = false">
+      <div class="sheet">
+        <div class="sheet-head">
+          <span>{{ t('cards.location.editDialogTitle') }}</span>
+          <button class="icon-btn small" @click="showEditDialog = false" aria-label="关闭">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="sheet-body">
+          <div class="field">
+            <label>{{ t('cards.location.address') }}</label>
+            <input v-model="editForm.address" class="input" />
+          </div>
+          <div class="field">
+            <label>{{ t('cards.location.clockAddress') }}</label>
+            <input v-model="editForm.location" class="input" />
+          </div>
+          <div class="field">
+            <label>{{ t('cards.location.longitude') }}</label>
+            <input v-model="editForm.longitude" class="input" />
+            <div v-if="editErrors.longitude" class="field-error">{{ editErrors.longitude }}</div>
+          </div>
+          <div class="field">
+            <label>{{ t('cards.location.latitude') }}</label>
+            <input v-model="editForm.latitude" class="input" />
+            <div v-if="editErrors.latitude" class="field-error">{{ editErrors.latitude }}</div>
+          </div>
+          <div class="field">
+            <label>{{ t('cards.location.wifiName') }}</label>
+            <input v-model="editForm.wifi" class="input" />
+          </div>
+          <div class="field">
+            <label>{{ t('cards.location.wifiMac') }}</label>
+            <input v-model="editForm.wifi_mac" class="input" />
+            <div v-if="editErrors.wifi_mac" class="field-error">{{ editErrors.wifi_mac }}</div>
+          </div>
+          <div class="field">
+            <label>{{ t('cards.location.randomOffsetLabel') }} ({{ t('cards.location.metersUnit') }})</label>
+            <input v-model="editForm.randomOffset" class="input" />
+            <div v-if="editErrors.randomOffset" class="field-error">{{ editErrors.randomOffset }}</div>
+          </div>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn-secondary block" @click="resetConfigToDefault">
+            {{ t('cards.location.resetDefault') }}
+          </button>
+          <button class="btn-primary block" @click="saveEditConfig">
+            {{ t('cards.location.save') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Success overlay -->
+    <div v-if="showSuccess" class="success-overlay">
+      <div class="success-mark">
+        <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 6L9 17l-5-5" class="check-path" />
+        </svg>
+      </div>
     </div>
   </div>
-  <t-divider />
-  <div
-    style="text-align: center;font-size: small; color: grey;display: flex;align-items: center;justify-content: center;margin-top: 30px;">
-    <div>{{ t('settings.autoLogin') }}&nbsp;</div>
-    <t-switch size="small" :default-value="true" :icon="icons" v-model="auto_login"
-      @change="save_auto_login"></t-switch>
-  </div>
-  <p style="text-align: center;margin-top: 5px;">
-    <a href="https://github.com/Little-King2022/daka" target="_blank">
-      <img src="https://img.shields.io/badge/deploy_with-Vercel-%23000000?logo=vercel" alt="Deploy with Vercel">&nbsp;
-      <img alt="GitHub" src="https://img.shields.io/badge/Github-%E9%A1%B9%E7%9B%AE%E5%9C%B0%E5%9D%80-blue">
-    </a>
-  </p>
 </template>
 
+<style>
+:root {
+  --green-50: oklch(0.97 0.02 155);
+  --green-100: oklch(0.94 0.04 155);
+  --green-200: oklch(0.88 0.08 155);
+  --green-400: oklch(0.72 0.14 155);
+  --green-500: oklch(0.62 0.16 155);
+  --green-600: oklch(0.55 0.15 155);
+  --green-700: oklch(0.45 0.12 155);
+
+  --bg: #fafbfa;
+  --bg-card: #ffffff;
+  --bg-input: #f3f5f3;
+  --text-primary: oklch(0.22 0.01 155);
+  --text-secondary: oklch(0.50 0.01 155);
+  --text-tertiary: oklch(0.65 0.005 155);
+  --border: oklch(0.90 0.01 155);
+  --error: oklch(0.6 0.2 25);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.08);
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme='dark'] {
+  --bg: #0f1210;
+  --bg-card: #1a1f1c;
+  --bg-input: #242a26;
+  --text-primary: oklch(0.93 0.005 155);
+  --text-secondary: oklch(0.65 0.01 155);
+  --text-tertiary: oklch(0.50 0.01 155);
+  --border: oklch(0.30 0.01 155);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.3s, color 0.3s;
+}
+
+body { display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; }
+
+#app {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 0 !important;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+* { box-sizing: border-box; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes checkmark {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+</style>
+
 <style scoped>
-.home-input {
-  margin: 20px auto 10px;
-  display: block;
-  width: 90%;
-  border: 1px solid rgba(220, 220, 220, 1);
-  border-radius: 6px;
+.app-shell { width: 100%; min-height: 100vh; }
+
+.screen { padding: 0 20px 32px; min-height: 100vh; display: flex; flex-direction: column; }
+.login-screen { padding: 0 24px 24px; }
+
+/* Top bar */
+.top-bar {
+  display: flex; justify-content: flex-end; align-items: center;
+  padding: 16px 0;
+}
+.spacer { flex: 1; }
+
+/* Icon button */
+.icon-btn {
+  background: var(--bg-input); border: none; color: var(--text-secondary);
+  width: 36px; height: 36px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all var(--transition);
+  font-family: inherit;
+}
+.icon-btn:hover { transform: scale(1.05); }
+.icon-btn.text { font-size: 12px; font-weight: 700; }
+.icon-btn.small { width: 32px; height: 32px; }
+
+/* Hero (login) */
+.hero {
+  text-align: center; margin-top: 40px; margin-bottom: 40px;
+  animation: fadeUp 0.5s ease both;
+}
+.hero-mark {
+  width: 64px; height: 64px; border-radius: 18px;
+  background: linear-gradient(135deg, var(--green-400), var(--green-600));
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-bottom: 18px;
+  box-shadow: 0 8px 24px oklch(0.55 0.15 155 / 0.3);
+}
+.hero-title {
+  font-size: 26px; font-weight: 700; letter-spacing: -0.03em;
+  color: var(--text-primary); margin: 0;
+}
+
+/* Tabs */
+.tabs {
+  display: flex; background: var(--bg-input); border-radius: 10px;
+  padding: 3px; gap: 2px;
+  animation: fadeUp 0.5s ease 0.1s both;
+}
+.tab {
+  flex: 1; border: none; background: transparent; cursor: pointer;
+  padding: 10px 0; font-size: 14px; font-weight: 600;
+  color: var(--text-tertiary); border-radius: 8px;
+  font-family: inherit;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  transition: all var(--transition);
+}
+.tab.active {
+  background: var(--bg-card); color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Form */
+.form-area {
+  margin-top: 24px; flex: 1;
+  animation: fadeUp 0.5s ease 0.2s both;
+}
+.field { margin-bottom: 16px; }
+.field label {
+  display: block; font-size: 13px; font-weight: 500;
+  color: var(--text-secondary); margin-bottom: 6px;
+  letter-spacing: -0.01em;
+}
+.input {
+  width: 100%; padding: 12px 16px;
+  background: var(--bg-input); border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm); font-size: 15px;
+  font-family: inherit; color: var(--text-primary);
+  outline: none; transition: border-color var(--transition);
+}
+.input::placeholder { color: var(--text-tertiary); }
+.input:focus { border-color: var(--green-400); }
+.input.has-suffix { padding-right: 110px; }
+.input-wrap { position: relative; }
+.suffix-btn {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  background: var(--green-500); color: white; border: none;
+  padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all var(--transition);
+  font-family: inherit;
+}
+.suffix-btn:hover:not(:disabled) { transform: translateY(-50%) scale(1.04); }
+.suffix-btn:disabled {
+  background: var(--green-200); color: white; opacity: 0.7; cursor: not-allowed;
+}
+.field-error { font-size: 12px; color: var(--error); margin-top: 4px; }
+
+/* Tutorial card */
+.tutorial {
+  background: var(--bg-input); border-radius: var(--radius-sm);
+  margin-bottom: 20px; overflow: hidden;
+}
+.tutorial-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px; cursor: pointer; user-select: none;
+}
+.tutorial-title {
+  flex: 1; font-size: 14px; font-weight: 600; color: var(--text-primary);
+}
+.tutorial-body {
+  max-height: 0; overflow: hidden;
+  transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tutorial-body.open { max-height: 1200px; }
+.tutorial-inner {
+  padding: 4px 18px 16px;
+}
+.steps { display: flex; flex-direction: column; gap: 10px; }
+.step { display: flex; gap: 10px; align-items: flex-start; }
+.step-num {
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  background: var(--green-500); color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; margin-top: 1px;
+}
+.step-text {
+  font-size: 13px; color: var(--text-secondary); line-height: 1.5;
+}
+.step-text a {
+  color: var(--green-500); text-decoration: none; font-weight: 500;
+  background: none !important; padding: 0 !important;
+}
+.tutorial-img {
+  width: calc(100% + 36px); margin: 14px -18px 0;
+  border: none; cursor: zoom-in; display: block;
+}
+
+/* Buttons */
+.btn-primary {
+  background: var(--green-500); color: white; border: none;
+  padding: 14px 28px; border-radius: var(--radius-sm);
+  font-size: 16px; font-weight: 600; letter-spacing: -0.01em;
+  cursor: pointer; transition: all var(--transition);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: inherit;
+}
+.btn-primary:hover:not(:disabled) { transform: scale(1.02); }
+.btn-primary:disabled {
+  background: var(--green-200); cursor: not-allowed; opacity: 0.7;
+}
+.btn-primary.block { width: 100%; }
+
+.btn-secondary {
+  background: var(--bg-input); color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 14px 20px; border-radius: var(--radius-sm);
+  font-size: 14px; font-weight: 600;
+  cursor: pointer; transition: all var(--transition);
+  font-family: inherit;
+}
+.btn-secondary:hover { transform: scale(1.02); }
+.btn-secondary.block { width: 100%; }
+
+.btn-ghost-row {
+  width: 100%; padding: 10px; margin-top: 4px;
+  background: transparent; border: none; color: var(--text-tertiary);
+  font-size: 13px; cursor: pointer; font-family: inherit;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+.btn-ghost-row:hover { color: var(--text-secondary); }
+
+.hint-center {
+  font-size: 12px; color: var(--text-tertiary);
+  text-align: center; margin: 16px 0 0; line-height: 1.6;
+}
+
+.spinner {
+  width: 16px; height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%; display: inline-block;
+  animation: spin 0.6s linear infinite;
+}
+.spinner-on-primary { border-color: rgba(255, 255, 255, 0.3); border-top-color: white; }
+.spinner-green {
+  width: 20px; height: 20px;
+  border: 2.5px solid rgba(0, 0, 0, 0.1);
+  border-top-color: var(--green-500);
+}
+
+/* Login footer */
+.login-footer {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 24px 0 8px; font-size: 13px; color: var(--text-tertiary);
+}
+
+.switch {
+  width: 40px; height: 24px; border-radius: 12px; border: none;
+  background: var(--border); position: relative; cursor: pointer;
+  transition: background var(--transition); padding: 0;
+}
+.switch.on { background: var(--green-500); }
+.switch .thumb {
+  position: absolute; top: 3px; left: 3px;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: white; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: left var(--transition);
+}
+.switch.on .thumb { left: 19px; }
+
+.github-badge {
+  text-align: center; margin: 12px 0 16px; font-size: 12px;
+}
+.github-badge a {
+  background: none !important; padding: 0 !important;
+  display: inline-block;
+}
+
+/* ─── Dashboard ─── */
+.dash-top {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 0;
+}
+.date-line { font-size: 13px; color: var(--text-tertiary); margin-bottom: 2px; }
+.greet-line { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.dash-top-actions { display: flex; gap: 8px; }
+
+.fade-up { animation: fadeUp 0.4s ease both; }
+.fade-up.delay-1 { animation-delay: 0.1s; }
+.fade-up.delay-2 { animation-delay: 0.15s; }
+
+.hero-card {
+  position: relative; overflow: hidden; text-align: center;
+  padding: 32px 20px 28px;
+  background: linear-gradient(160deg, var(--green-400), var(--green-500));
+  color: white; border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.hero-deco {
+  position: absolute; border-radius: 50%; pointer-events: none;
+}
+.hero-deco.a {
+  top: -40px; right: -40px; width: 120px; height: 120px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.hero-deco.b {
+  bottom: -20px; left: -20px; width: 80px; height: 80px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.hero-time {
+  font-size: 42px; font-weight: 700; letter-spacing: -0.04em;
+  margin-bottom: 4px; font-variant-numeric: tabular-nums;
+}
+.hero-rule {
+  font-size: 14px; opacity: 0.85; margin-bottom: 24px;
+  white-space: pre-wrap;
+}
+.checkin-btn {
+  width: 160px; height: 52px; border-radius: 26px;
+  border: none; cursor: pointer; font-family: inherit;
+  font-size: 16px; font-weight: 700; letter-spacing: 2px;
+  background: white; color: var(--green-600);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  transition: transform var(--transition);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.checkin-btn:hover:not(:disabled) { transform: scale(1.05); }
+.checkin-btn:disabled {
+  background: rgba(255, 255, 255, 0.2); color: rgba(255, 255, 255, 0.7);
+  cursor: not-allowed;
+}
+.hero-foot {
+  font-size: 12px; opacity: 0.7; margin-top: 12px;
+}
+.hero-foot.warn { color: #fff5f0; opacity: 0.95; font-weight: 500; }
+
+/* Sections */
+.section { margin-top: 16px; }
+.section-stack {
+  margin-top: 12px; display: flex; flex-direction: column; gap: 12px;
+}
+.section-title {
+  font-size: 13px; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 10px; padding: 0 4px;
 }
 
 .card {
-  margin: 0px 10px;
-  background-color: rgba(232, 244, 255, 0.524);
-  padding: 10px 20px;
-  border-radius: 10px;
-  --td-input-bg-color: aliceblue;
-  --td-input-suffix-text-color: rgba(142, 142, 142, 0.5);
-  --td-input-vertical-padding: 10px;
-  border-radius: 8px;
-  box-shadow: 6px 6px 8px rgba(0, 0, 0, 0.3);
-  animation: fade-in 0.2s;
-  position: relative;
-  overflow: hidden;
-  transition: height 1s ease;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-sm);
+  transition: all var(--transition);
+}
+.list-card { padding: 0; }
+
+.status-row {
+  display: flex; align-items: center; padding: 14px 20px;
+  border-bottom: 1px solid var(--border); gap: 4px;
+}
+.status-row:last-child { border-bottom: none; }
+.dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  margin-right: 8px; flex-shrink: 0;
+  background: var(--text-tertiary);
+}
+.dot.done { background: var(--green-500); }
+.dot.missing { background: var(--error); }
+.dot.pending { background: var(--text-tertiary); }
+.row-desc {
+  flex: 1; font-size: 14px; color: var(--text-primary);
+  display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.row-status {
+  font-size: 13px; font-weight: 500; color: var(--text-tertiary);
+  display: inline-flex; align-items: baseline; gap: 6px;
+  text-align: right;
+}
+.row-status.done { color: var(--green-500); }
+.row-status.missing { color: var(--error); }
+.clock-time {
+  font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.row-status.done .clock-time { color: var(--green-600); }
+.row-status.missing .clock-time { color: var(--error); }
+.status-label { color: inherit; opacity: 0.85; font-size: 12px; }
+.badge {
+  margin-left: 8px; font-size: 11px; font-weight: 600;
+  padding: 2px 8px; border-radius: 6px;
+  background: var(--green-50); color: var(--green-600);
+}
+.empty-row {
+  padding: 24px 20px; text-align: center;
+  font-size: 13px; color: var(--text-tertiary);
+}
+.rest-card {
+  padding: 20px; text-align: center; font-size: 14px;
+  color: var(--green-600); font-weight: 500;
 }
 
-.card-content {
-  transition: max-height 0.3s ease-in-out;
+/* Collapsibles */
+.collapsible {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-md); overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
-
-.card-details {
-  margin: 0 0 5px;
-  text-align: left;
+.coll-head {
+  padding: 14px 20px; display: flex; align-items: center;
+  cursor: pointer; user-select: none; gap: 12px;
 }
-
-.toggle-icon {
-  position: absolute;
-  top: 12px;
-  right: 10px;
-  cursor: pointer;
-  font-size: 20px;
-  transition: transform 1s ease;
+.coll-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: var(--green-50); color: var(--green-600);
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
 }
-
-.card.collapsed .toggle-icon {
-  transform: rotate(180deg);
+.coll-title {
+  flex: 1; font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--text-primary);
 }
-
-.icon-button {
-  border: 0;
-  background: transparent;
-  padding: 0;
+.coll-action {
+  background: var(--bg-input); border: none; color: var(--text-secondary);
+  width: 32px; height: 32px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all var(--transition);
+}
+.coll-action:hover { transform: scale(1.05); }
+.chev {
+  color: var(--text-tertiary);
+  transition: transform 0.3s ease;
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
+}
+.chev.open { transform: rotate(90deg); }
+
+.coll-body {
+  max-height: 0; overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.coll-body.open { max-height: 500px; }
+.coll-inner {
+  padding: 0 20px 16px;
+  border-top: 1px solid var(--border);
 }
 
-.edit-icon {
-  font-size: 18px;
-  color: #666;
+.info-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 0; gap: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.info-row.last { border-bottom: none; }
+.info-row > span:first-child {
+  font-size: 13px; color: var(--text-secondary); flex-shrink: 0;
+}
+.info-row > span:last-child {
+  font-size: 13px; font-weight: 500; color: var(--text-primary);
+  text-align: right; word-break: break-all;
 }
 
-.edit-icon-button {
-  position: absolute;
-  top: 12px;
-  right: 36px;
-  z-index: 1;
+.dash-footer {
+  display: flex; justify-content: center; align-items: center; gap: 8px;
+  margin-top: 20px; padding: 16px 0; font-size: 13px; color: var(--text-tertiary);
 }
 
-.edit-dialog-backdrop {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* Lightbox */
+.lightbox {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center;
+  cursor: zoom-out; padding: 16px;
+  animation: backdropIn 0.25s ease;
+}
+.lightbox img {
+  max-width: 95vw; max-height: 90vh; border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.edit-dialog-panel {
-  background: white;
-  border-radius: 12px;
-  width: 90%;
-  max-width: 480px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+/* Modal / bottom sheet */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0.35); backdrop-filter: blur(6px);
+  display: flex; align-items: flex-end; justify-content: center;
+  animation: backdropIn 0.25s ease;
+}
+.sheet {
+  background: var(--bg-card); border-radius: 20px 20px 0 0;
+  width: 100%; max-width: 480px; max-height: 85vh;
+  display: flex; flex-direction: column;
+  animation: fadeUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.sheet-head {
+  padding: 20px 24px 16px; display: flex; align-items: center;
+  border-bottom: 1px solid var(--border);
+  font-size: 17px; font-weight: 700; color: var(--text-primary);
+}
+.sheet-head > span { flex: 1; }
+.sheet-body {
+  flex: 1; overflow: auto; padding: 20px 24px;
+}
+.sheet-foot {
+  display: flex; gap: 10px; padding: 16px 24px 20px;
+  border-top: 1px solid var(--border);
 }
 
-.edit-dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid #eee;
+/* Success overlay */
+.success-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(8px);
+  animation: backdropIn 0.3s ease;
 }
-
-.edit-dialog-title {
-  font-size: 16px;
-  font-weight: bold;
+.success-mark {
+  width: 120px; height: 120px; border-radius: 50%;
+  background: var(--green-500);
+  display: flex; align-items: center; justify-content: center;
+  animation: scaleIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 0 60px oklch(0.6 0.15 155 / 0.4);
 }
-
-.edit-dialog-close {
-  color: #666;
-}
-
-.edit-dialog-close-button {
-  flex-shrink: 0;
-}
-
-.edit-dialog-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 20px;
-}
-
-.edit-field {
-  margin-bottom: 12px;
-}
-
-.edit-field label {
-  display: block;
-  font-size: 13px;
-  color: #666;
-  margin-bottom: 4px;
-}
-
-.edit-input {
-  border: 1px solid rgba(220, 220, 220, 1);
-  border-radius: 6px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .edit-dialog-backdrop {
-    background: rgba(0, 0, 0, 0.7);
-  }
-
-  .edit-dialog-panel {
-    background: #1f2937;
-    color: #f3f4f6;
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
-  }
-
-  .edit-dialog-header {
-    border-bottom-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .edit-dialog-title,
-  .edit-dialog-close,
-  .edit-field label {
-    color: #f3f4f6;
-  }
-
-  .edit-dialog-footer {
-    border-top-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .edit-icon {
-    color: #d1d5db;
-  }
-
-  .edit-input {
-    border-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .edit-input :deep(.t-input) {
-    background: #111827;
-    color: #f9fafb;
-    border-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .edit-input :deep(.t-input__inner),
-  .edit-input :deep(.t-input__inner::placeholder),
-  .edit-input :deep(.t-input__suffix),
-  .edit-input :deep(.t-input__tips) {
-    color: #d1d5db;
-  }
-}
-
-.edit-dialog-footer {
-  display: flex;
-  padding: 12px 20px;
-  border-top: 1px solid #eee;
-  gap: 8px;
-}
-
-t-switch {
-  height: 1px;
-}
-
-.login-tabs {
-  display: flex;
-  margin: 16px 5% 0;
-  border-bottom: 2px solid #e5e7eb;
-}
-
-.login-tab-btn {
-  flex: 1;
-  padding: 10px 6px;
-  font-size: 14px;
-  font-weight: 500;
-  background: transparent;
-  border: none;
-  border-bottom: 3px solid transparent;
-  margin-bottom: -2px;
-  cursor: pointer;
-  color: #9ca3af;
-  transition: color 0.2s, border-color 0.2s;
-}
-
-.login-tab-btn.active {
-  color: #0052d9;
-  border-bottom-color: #0052d9;
-}
-
-.sms-login-container {
-  padding-bottom: 10px;
-}
-
-.sms-code-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 5%;
-}
-
-.sms-code-input {
-  flex: 1;
-  border: 1px solid rgba(220, 220, 220, 1);
-  border-radius: 6px;
-}
-
-.sms-send-btn {
-  flex-shrink: 0;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
-@media (prefers-color-scheme: dark) {
-  .login-tabs {
-    border-bottom-color: rgba(255, 255, 255, 0.12);
-  }
-
-  .login-tab-btn {
-    color: #6b7280;
-  }
-
-  .login-tab-btn.active {
-    color: #60a5fa;
-    border-bottom-color: #60a5fa;
-  }
+.check-path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 0;
+  animation: checkmark 0.5s ease 0.3s both;
 }
 </style>

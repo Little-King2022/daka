@@ -16,7 +16,7 @@
   "buttons": {
     "login": "Log in",
     "refresh": "Refresh List",
-    "primaryCheckIn": "One-click Check-in",
+    "primaryCheckIn": "Check-in",
     "proceedCheckIn": "Check in anyway",
     "cancel": "Cancel"
   },

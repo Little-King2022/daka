@@ -1,7 +1,5 @@
 # 打卡小工具
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Little-King2022/daka)
-
 一个基于 Vue 3 + Vite 的前端打卡工具，无需独立后端，直接部署到 Vercel 即可使用。
 
 ## 功能特性
@@ -16,8 +14,8 @@
 ## 部署到 Vercel
 
 ### 方式一：一键部署（推荐）
-
-1. 点击上方 **Deploy with Vercel** 按钮。
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Little-King2022/daka)
+1. 点击上方 **Deploy** 按钮。
 2. 登录或注册 Vercel 账号。
 3. Vercel 会自动 Fork 本仓库到你的 GitHub 账号，并进入部署向导。
 4. 在 **Configure Project** 页面按需填写环境变量（见下方[环境变量](#环境变量)说明），也可以跳过，部署后再在项目设置里添加。

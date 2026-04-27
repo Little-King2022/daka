@@ -126,5 +126,21 @@
     "fillRequired": "请输入有效的手机号",
     "loginFailed": "登录失败，请检查验证码",
     "codeSending": "正在发送验证码，此操作需要10秒左右，请耐心等待"
+  },
+  "schedule": {
+    "title": "定时打卡",
+    "autoCheckIn": "自动打卡",
+    "on": "已开启",
+    "off": "未开启",
+    "morning": "上班时间",
+    "evening": "下班时间",
+    "variance": "随机偏移",
+    "minutes": "分钟",
+    "retryAttempts": "重试次数",
+    "nextAt": "下次打卡",
+    "tomorrow": "明日再执行",
+    "enabledHint": "到时自动打卡",
+    "autoTrigger": "定时触发",
+    "recentLog": "最近记录"
   }
 }

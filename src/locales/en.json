@@ -126,5 +126,21 @@
     "fillRequired": "Please enter your phone number and verification code",
     "loginFailed": "Login failed, please check your verification code",
     "codeSending": "Verification code is sending, this operation will take about 10 seconds"
+  },
+  "schedule": {
+    "title": "Auto Schedule",
+    "autoCheckIn": "Auto Check-in",
+    "on": "On",
+    "off": "Off",
+    "morning": "Clock-in Time",
+    "evening": "Clock-out Time",
+    "variance": "Random Offset",
+    "minutes": "min",
+    "retryAttempts": "Retry Attempts",
+    "nextAt": "Next At",
+    "tomorrow": "Scheduled for tomorrow",
+    "enabledHint": "Auto check-in at scheduled time",
+    "autoTrigger": "Auto triggered",
+    "recentLog": "Recent Logs"
   }
 }

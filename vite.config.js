@@ -16,9 +16,14 @@ export default defineConfig({
   server: {
     proxy: {
       '/api/daka': {
-        target: 'https://daka2.littleking.site/api/daka',
+        target: 'https://dak2.littleking.site/api/daka',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/daka/, '')
+      },
+      '/api/sms': {
+        target: 'https://hiklogin.littleking.site/api',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/sms/, '')
       }
     }
   }

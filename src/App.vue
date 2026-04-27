@@ -10,7 +10,7 @@ import instructionImg from './assets/instruction.png';
 const { t } = useI18n();
 
 const API_BASE = 'https://api.hikiot.com';
-const SMS_API_BASE = 'https://hiklogin.littleking.site/api';
+const SMS_API_BASE = import.meta.env.DEV ? '/api/sms' : '/api/sms';
 const FIXED_SIGN_SALT = 'WE1mfER7artAoJEwXKaCjw==';
 const REST_KEYWORD = '休息';
 const CUSTOM_CONFIG_KEY = 'daka_config_custom';
@@ -79,6 +79,208 @@ const imgZoom = ref(false);
 const collapseUser = ref(true);
 const collapseLocation = ref(true);
 const collapseTutorial = ref(true);
+const collapseSchedule = ref(true);
+
+/* ── Smart Schedule ── */
+const SCHEDULE_KEY = 'daka_schedule_config';
+const SCHEDULE_LOG_KEY = 'daka_schedule_log';
+const DEFAULT_SCHEDULE = {
+  enabled: false,
+  morning: { hour: 8, minute: 30, variance: 15 },   // 8:30 ±15min
+  evening: { hour: 17, minute: 30, variance: 20 },   // 17:30 ±20min
+  retryMaxAttempts: 3,
+  retryBaseDelay: 5000,  // 5s base, exponential backoff
+};
+
+const scheduleConfig = ref({ ...DEFAULT_SCHEDULE });
+const scheduleLog = ref([]);
+const nextScheduleTime = ref(null);
+const isScheduleTriggered = ref(false);
+const scheduleStatusText = ref('');
+
+const loadScheduleConfig = () => {
+  const saved = localStorage.getItem(SCHEDULE_KEY);
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved);
+      scheduleConfig.value = { ...DEFAULT_SCHEDULE, ...parsed };
+    } catch (e) { /* ignore */ }
+  }
+};
+
+const saveScheduleConfig = () => {
+  localStorage.setItem(SCHEDULE_KEY, JSON.stringify(scheduleConfig.value));
+  if (scheduleConfig.value.enabled) {
+    computeTodaySchedule();
+    findNextSchedule();
+  }
+};
+
+const loadScheduleLog = () => {
+  const saved = localStorage.getItem(SCHEDULE_LOG_KEY);
+  if (saved) {
+    try {
+      scheduleLog.value = JSON.parse(saved);
+    } catch (e) { scheduleLog.value = []; }
+  }
+};
+
+const addScheduleLog = (entry) => {
+  const log = { ...entry, time: new Date().toISOString() };
+  scheduleLog.value.unshift(log);
+  // Keep last 50 entries
+  if (scheduleLog.value.length > 50) scheduleLog.value = scheduleLog.value.slice(0, 50);
+  localStorage.setItem(SCHEDULE_LOG_KEY, JSON.stringify(scheduleLog.value));
+};
+
+// Generate random time with variance (minutes)
+const generateRandomTime = (baseHour, baseMinute, varianceMinutes) => {
+  const offsetMinutes = Math.floor(Math.random() * (2 * varianceMinutes + 1)) - varianceMinutes;
+  const totalMinutes = baseHour * 60 + baseMinute + offsetMinutes;
+  const clamped = Math.max(0, Math.min(24 * 60 - 1, totalMinutes));
+  return { hour: Math.floor(clamped / 60), minute: clamped % 60 };
+};
+
+// Compute today's scheduled times
+const todayScheduledTimes = ref({ morning: null, evening: null });
+
+const computeTodaySchedule = () => {
+  const cfg = scheduleConfig.value;
+  todayScheduledTimes.value = {
+    morning: generateRandomTime(cfg.morning.hour, cfg.morning.minute, cfg.morning.variance),
+    evening: generateRandomTime(cfg.evening.hour, cfg.evening.minute, cfg.evening.variance),
+  };
+};
+
+// Find the next upcoming scheduled time for today
+const findNextSchedule = () => {
+  if (!scheduleConfig.value.enabled) {
+    nextScheduleTime.value = null;
+    scheduleStatusText.value = '';
+    return;
+  }
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const times = todayScheduledTimes.value;
+
+  const candidates = [];
+  if (times.morning) {
+    candidates.push({ ...times.morning, label: 'morning' });
+  }
+  if (times.evening) {
+    candidates.push({ ...times.evening, label: 'evening' });
+  }
+
+  for (const t of candidates) {
+    const tMinutes = t.hour * 60 + t.minute;
+    if (tMinutes > nowMinutes) {
+      nextScheduleTime.value = t;
+      scheduleStatusText.value = `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`;
+      return;
+    }
+  }
+  // All past for today
+  nextScheduleTime.value = null;
+  scheduleStatusText.value = t('schedule.tomorrow');
+};
+
+// Check if already checked in for a given shift
+const isAlreadyCheckedIn = (shift) => {
+  const details = today_status.value?.current?.details;
+  if (!details || !details.length) return false;
+  // Check if any status says "已打卡" or "正常"
+  return details.some(d => {
+    const desc = d.statusDesc || '';
+    const descLower = desc.toLowerCase();
+    if (desc.includes('已打卡') || desc.includes('正常')) return true;
+    // Match by shift type
+    if (shift === 'morning' && (descLower.includes('上班') || descLower.includes('签到'))) {
+      return desc.includes('已打卡') || desc.includes('正常');
+    }
+    if (shift === 'evening' && (descLower.includes('下班') || descLower.includes('签退'))) {
+      return desc.includes('已打卡') || desc.includes('正常');
+    }
+    return false;
+  });
+};
+
+// ── Retry with exponential backoff ──
+const dakaWithRetry = async (maxAttempts = 3, baseDelay = 5000, shift = 'manual') => {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await daka(true); // silent mode
+      if (result) {
+        addScheduleLog({ type: 'success', shift, attempt, message: t('messages.checkInSuccess') });
+        return true;
+      }
+      lastError = 'API returned failure';
+    } catch (error) {
+      lastError = error.message || String(error);
+    }
+    addScheduleLog({ type: 'retry', shift, attempt, message: lastError });
+    if (attempt < maxAttempts) {
+      const delay = baseDelay * Math.pow(2, attempt - 1);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  addScheduleLog({ type: 'failed', shift, attempts: maxAttempts, message: lastError });
+  return false;
+};
+
+// ── Schedule timer ──
+let scheduleTimer = null;
+const SCHEDULE_CHECK_INTERVAL = 30 * 1000; // Check every 30s
+
+const checkScheduleAndRun = async () => {
+  if (!scheduleConfig.value.enabled || !has_tested.value || isCheckingIn.value) return;
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const times = todayScheduledTimes.value;
+
+  for (const [shift, t] of Object.entries(times)) {
+    if (!t) continue;
+    const tMinutes = t.hour * 60 + t.minute;
+    // Trigger if within the same minute window and not already triggered
+    if (tMinutes === nowMinutes && !isAlreadyCheckedIn(shift) && !isScheduleTriggered.value) {
+      isScheduleTriggered.value = true;
+      addScheduleLog({ type: 'triggered', shift, message: `${t('schedule.autoTrigger')}: ${shift}` });
+      const cfg = scheduleConfig.value;
+      await dakaWithRetry(cfg.retryMaxAttempts, cfg.retryBaseDelay, shift);
+      isScheduleTriggered.value = false;
+      findNextSchedule();
+      break;
+    }
+  }
+};
+
+const startScheduleTimer = () => {
+  if (scheduleTimer) clearInterval(scheduleTimer);
+  if (!scheduleConfig.value.enabled) return;
+  computeTodaySchedule();
+  findNextSchedule();
+  scheduleTimer = setInterval(checkScheduleAndRun, SCHEDULE_CHECK_INTERVAL);
+};
+
+const stopScheduleTimer = () => {
+  if (scheduleTimer) {
+    clearInterval(scheduleTimer);
+    scheduleTimer = null;
+  }
+  nextScheduleTime.value = null;
+  scheduleStatusText.value = '';
+};
+
+const toggleSchedule = () => {
+  scheduleConfig.value.enabled = !scheduleConfig.value.enabled;
+  saveScheduleConfig();
+  if (scheduleConfig.value.enabled) {
+    computeTodaySchedule();
+    startScheduleTimer();
+  } else {
+    stopScheduleTimer();
+  }
+};
 
 /* ── Live clock ── */
 const now = ref(new Date());
@@ -113,6 +315,8 @@ const startCooldown = (seconds) => {
 
 onBeforeUnmount(() => {
   clearCooldown();
+  stopScheduleTimer();
+  if (midnightCheck) clearInterval(midnightCheck);
   if (smsCooldownTimer) clearInterval(smsCooldownTimer);
   if (clockTimer) clearInterval(clockTimer);
   prefersDarkMq.removeEventListener('change', handleSystemThemeChange);
@@ -351,8 +555,8 @@ const getSign = (payload) => {
   return md5(firstHash + FIXED_SIGN_SALT).toUpperCase();
 };
 
-const daka = async () => {
-  if (isCheckingIn.value) return;
+const daka = async (silent = false) => {
+  if (isCheckingIn.value) return false;
   isCheckingIn.value = true;
   try {
     const headers = getHeaders(token.value);
@@ -395,28 +599,35 @@ const daka = async () => {
         team_name: account_info.value.team_name,
         daka_result: 'daka_success',
       });
-      showSuccess.value = true;
-      setTimeout(() => { showSuccess.value = false; }, 2300);
+      if (!silent) {
+        showSuccess.value = true;
+        setTimeout(() => { showSuccess.value = false; }, 2300);
+      }
       startCooldown(15);
+      return true;
     } else {
+      const failMsg = response.data?.msg || t('messages.unknownError');
       await recordUserInfo({
         nick_name: account_info.value.nick_name,
         name: account_info.value.name,
         phone: account_info.value.phone,
         team_name: account_info.value.team_name,
-        daka_result: `daka_failed: ${response.data?.msg || t('messages.unknownError')}`,
+        daka_result: `daka_failed: ${failMsg}`,
       });
-      Toast(response.data?.msg ?? t('messages.checkInFailed'));
+      if (!silent) Toast(response.data?.msg ?? t('messages.checkInFailed'));
+      return false;
     }
   } catch (error) {
+    const errMsg = error.message || t('messages.networkError');
     await recordUserInfo({
       nick_name: account_info.value.nick_name,
       name: account_info.value.name,
       phone: account_info.value.phone,
       team_name: account_info.value.team_name,
-      daka_result: `daka_error: ${error.message || t('messages.networkError')}`,
+      daka_result: `daka_error: ${errMsg}`,
     });
-    Toast(t('messages.networkError'));
+    if (!silent) Toast(t('messages.networkError'));
+    return false;
   } finally {
     isCheckingIn.value = false;
   }
@@ -575,6 +786,10 @@ if (localStorage.getItem('sms_phone')) {
   phone.value = localStorage.getItem('sms_phone');
 }
 get_daka_config();
+loadScheduleConfig();
+loadScheduleLog();
+computeTodaySchedule();
+
 if (localStorage.getItem('token')) {
   token.value = localStorage.getItem('token');
   has_verified.value = true;
@@ -583,6 +798,22 @@ if (localStorage.getItem('token')) {
     test_token();
   }
 }
+
+// Regenerate schedule at midnight
+const midnightCheck = setInterval(() => {
+  const d = new Date();
+  if (d.getHours() === 0 && d.getMinutes() === 0) {
+    computeTodaySchedule();
+    findNextSchedule();
+  }
+}, 60000);
+
+// Start schedule when user logs in
+watch(has_tested, (val) => {
+  if (val && scheduleConfig.value.enabled) {
+    startScheduleTimer();
+  }
+});
 </script>
 
 <template>
@@ -782,6 +1013,17 @@ if (localStorage.getItem('token')) {
 
         <!-- Today status -->
         <div v-if="!account_info.is_rest_rule" class="section fade-up delay-1">
+          <!-- Schedule status banner -->
+          <div v-if="scheduleConfig.enabled && scheduleStatusText" class="schedule-banner fade-up">
+            <div class="schedule-banner-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div class="schedule-banner-text">
+              <span>{{ t('schedule.nextAt') }}: {{ scheduleStatusText }}</span>
+              <span class="schedule-banner-sub">{{ t('schedule.enabledHint') }}</span>
+            </div>
+          </div>
+
           <div class="section-title">{{ t('cards.today.title') }}</div>
           <div class="card list-card">
             <template v-if="today_status.current?.details?.length">
@@ -881,6 +1123,96 @@ if (localStorage.getItem('token')) {
                 <div class="info-row"><span>{{ t('cards.location.coordinates') }}</span><span>{{ daka_config.longitude }}, {{ daka_config.latitude }}</span></div>
                 <div class="info-row"><span>Wi-Fi</span><span>{{ daka_config.wifi }} ({{ daka_config.wifi_mac }})</span></div>
                 <div class="info-row last"><span>{{ t('cards.location.randomOffsetLabel') }}</span><span>{{ daka_config.randomOffset ?? DEFAULT_DAKA_CONFIG.randomOffset }} {{ t('cards.location.metersUnit') }}</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Smart Schedule -->
+          <div class="collapsible">
+            <div class="coll-head" @click="collapseSchedule = !collapseSchedule">
+              <div class="coll-icon schedule-icon">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <span class="coll-title">{{ t('schedule.title') }}</span>
+              <span class="schedule-badge" :class="{ on: scheduleConfig.enabled }">
+                {{ scheduleConfig.enabled ? t('schedule.on') : t('schedule.off') }}
+              </span>
+              <span class="chev" :class="{ open: !collapseSchedule }">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+              </span>
+            </div>
+            <div class="coll-body" :class="{ open: !collapseSchedule }">
+              <div class="coll-inner">
+                <!-- Enable toggle -->
+                <div class="info-row">
+                  <span>{{ t('schedule.autoCheckIn') }}</span>
+                  <button
+                    class="switch"
+                    :class="{ on: scheduleConfig.enabled }"
+                    @click="toggleSchedule"
+                    :aria-pressed="scheduleConfig.enabled"
+                  >
+                    <span class="thumb"></span>
+                  </button>
+                </div>
+                <!-- Morning time -->
+                <div class="info-row">
+                  <span>{{ t('schedule.morning') }}</span>
+                  <div class="time-input-group">
+                    <input type="number" class="time-input" v-model.number="scheduleConfig.morning.hour" min="0" max="23" @change="saveScheduleConfig" />
+                    <span class="time-sep">:</span>
+                    <input type="number" class="time-input" v-model.number="scheduleConfig.morning.minute" min="0" max="59" @change="saveScheduleConfig" />
+                  </div>
+                </div>
+                <!-- Morning variance -->
+                <div class="info-row">
+                  <span>{{ t('schedule.variance') }}</span>
+                  <div class="variance-group">
+                    <span>±</span>
+                    <input type="number" class="time-input small" v-model.number="scheduleConfig.morning.variance" min="0" max="60" @change="saveScheduleConfig" />
+                    <span class="variance-unit">{{ t('schedule.minutes') }}</span>
+                  </div>
+                </div>
+                <!-- Evening time -->
+                <div class="info-row">
+                  <span>{{ t('schedule.evening') }}</span>
+                  <div class="time-input-group">
+                    <input type="number" class="time-input" v-model.number="scheduleConfig.evening.hour" min="0" max="23" @change="saveScheduleConfig" />
+                    <span class="time-sep">:</span>
+                    <input type="number" class="time-input" v-model.number="scheduleConfig.evening.minute" min="0" max="59" @change="saveScheduleConfig" />
+                  </div>
+                </div>
+                <!-- Evening variance -->
+                <div class="info-row">
+                  <span>{{ t('schedule.variance') }}</span>
+                  <div class="variance-group">
+                    <span>±</span>
+                    <input type="number" class="time-input small" v-model.number="scheduleConfig.evening.variance" min="0" max="60" @change="saveScheduleConfig" />
+                    <span class="variance-unit">{{ t('schedule.minutes') }}</span>
+                  </div>
+                </div>
+                <!-- Retry settings -->
+                <div class="info-row">
+                  <span>{{ t('schedule.retryAttempts') }}</span>
+                  <input type="number" class="time-input small" v-model.number="scheduleConfig.retryMaxAttempts" min="1" max="5" @change="saveScheduleConfig" />
+                </div>
+                <!-- Next schedule info -->
+                <div v-if="scheduleConfig.enabled && scheduleStatusText" class="info-row last schedule-next">
+                  <span>{{ t('schedule.nextAt') }}</span>
+                  <span class="schedule-time-highlight">{{ scheduleStatusText }}</span>
+                </div>
+                <div v-else class="info-row last">
+                  <span></span><span></span>
+                </div>
+                <!-- Recent log -->
+                <div v-if="scheduleLog.length" class="schedule-log">
+                  <div class="schedule-log-title">{{ t('schedule.recentLog') }}</div>
+                  <div v-for="(log, idx) in scheduleLog.slice(0, 5)" :key="idx" class="schedule-log-row">
+                    <span class="log-type" :class="log.type">{{ log.type }}</span>
+                    <span class="log-msg">{{ log.shift }} #{{ log.attempt || log.attempts || '-' }} {{ log.message }}</span>
+                    <span class="log-time">{{ new Date(log.time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }}</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1539,4 +1871,86 @@ body::-webkit-scrollbar,
   stroke-dashoffset: 0;
   animation: checkmark 0.5s ease 0.3s both;
 }
+
+/* Schedule banner */
+.schedule-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin-bottom: 12px;
+  background: var(--green-50); border: 1px solid var(--green-200);
+  border-radius: var(--radius-sm); font-size: 13px;
+}
+[data-theme='dark'] .schedule-banner {
+  background: rgba(255,255,255,0.05); border-color: var(--green-700);
+}
+.schedule-banner-icon {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--green-100); color: var(--green-600);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+[data-theme='dark'] .schedule-banner-icon { background: var(--green-700); color: var(--green-200); }
+.schedule-banner-text { display: flex; flex-direction: column; gap: 1px; }
+.schedule-banner-sub { font-size: 11px; color: var(--text-tertiary); }
+
+/* Schedule icon */
+.schedule-icon { background: oklch(0.95 0.03 80); color: oklch(0.55 0.12 80); }
+[data-theme='dark'] .schedule-icon { background: oklch(0.25 0.04 80); color: oklch(0.7 0.1 80); }
+
+/* Schedule badge */
+.schedule-badge {
+  font-size: 11px; font-weight: 600; padding: 2px 8px;
+  border-radius: 6px; background: var(--bg-input); color: var(--text-tertiary);
+}
+.schedule-badge.on { background: var(--green-50); color: var(--green-600); }
+[data-theme='dark'] .schedule-badge.on { background: oklch(0.25 0.06 155); color: var(--green-400); }
+
+/* Time input */
+.time-input-group {
+  display: flex; align-items: center; gap: 2px;
+}
+.time-input {
+  width: 38px; text-align: center; padding: 4px 2px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  border-radius: 6px; font-size: 13px; font-family: inherit;
+  color: var(--text-primary); outline: none;
+  -moz-appearance: textfield;
+}
+.time-input::-webkit-inner-spin-button,
+.time-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.time-input:focus { border-color: var(--green-400); }
+.time-input.small { width: 46px; }
+.time-sep { font-weight: 700; font-size: 14px; color: var(--text-secondary); }
+
+.variance-group {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 13px; color: var(--text-secondary);
+}
+.variance-unit { font-size: 12px; color: var(--text-tertiary); }
+
+/* Schedule next highlight */
+.schedule-next .schedule-time-highlight {
+  font-weight: 700; color: var(--green-600); font-variant-numeric: tabular-nums;
+}
+[data-theme='dark'] .schedule-next .schedule-time-highlight { color: var(--green-400); }
+
+/* Schedule log */
+.schedule-log { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.schedule-log-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.schedule-log-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-tertiary); padding: 3px 0;
+}
+.log-type {
+  font-weight: 600; font-size: 10px; padding: 1px 5px;
+  border-radius: 4px; text-transform: uppercase;
+}
+.log-type.success { background: var(--green-50); color: var(--green-600); }
+.log-type.retry { background: #fff7ed; color: #c2410c; }
+.log-type.failed { background: #fef2f2; color: #dc2626; }
+.log-type.triggered { background: #eff6ff; color: #2563eb; }
+[data-theme='dark'] .log-type.success { background: oklch(0.25 0.06 155); color: var(--green-400); }
+[data-theme='dark'] .log-type.retry { background: oklch(0.25 0.06 60); color: oklch(0.7 0.12 60); }
+[data-theme='dark'] .log-type.failed { background: oklch(0.25 0.08 25); color: oklch(0.7 0.15 25); }
+[data-theme='dark'] .log-type.triggered { background: oklch(0.25 0.06 260); color: oklch(0.7 0.12 260); }
+.log-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-time { font-variant-numeric: tabular-nums; flex-shrink: 0; }
 </style>

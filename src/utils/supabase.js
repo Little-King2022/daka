@@ -83,6 +83,59 @@ export const recordUserInfo = async (userInfo) => {
   }
 }
 
+export const getDakaSettings = async (accountNo) => {
+  if (!accountNo || supabaseKey === 'your-supabase-anon-key') {
+    return { success: false, error: 'supabase settings disabled' }
+  }
+
+  try {
+    await initSupabaseAuth()
+
+    const { data, error } = await supabase
+      .from('daka_settings')
+      .select('schedule_config,daka_config,updated_at')
+      .eq('account_no', accountNo)
+      .maybeSingle()
+
+    if (error) {
+      return { success: false, error }
+    }
+
+    return { success: true, data }
+  } catch (error) {
+    return { success: false, error }
+  }
+}
+
+export const saveDakaSettings = async (accountNo, settings) => {
+  if (!accountNo || supabaseKey === 'your-supabase-anon-key') {
+    return { success: false, error: 'supabase settings disabled' }
+  }
+
+  try {
+    await initSupabaseAuth()
+
+    const { data, error } = await supabase
+      .from('daka_settings')
+      .upsert({
+        account_no: accountNo,
+        schedule_config: settings.schedule_config ?? {},
+        daka_config: settings.daka_config ?? {},
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'account_no' })
+      .select()
+      .single()
+
+    if (error) {
+      return { success: false, error }
+    }
+
+    return { success: true, data }
+  } catch (error) {
+    return { success: false, error }
+  }
+}
+
 // 获取用户IP地址（带缓存）
 const getUserIP = async () => {
   try {

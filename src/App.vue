@@ -3,7 +3,7 @@ import { ref, computed, onBeforeUnmount, watch } from 'vue';
 import { Toast, Dialog } from 'tdesign-mobile-vue';
 import axios from 'axios';
 import md5 from './utils/md5';
-import { recordUserInfo } from './utils/supabase';
+import { getDakaSettings, recordUserInfo, saveDakaSettings } from './utils/supabase';
 import { useI18n } from 'vue-i18n';
 import instructionImg from './assets/instruction.png';
 
@@ -101,6 +101,7 @@ const nextScheduleTime = ref(null);
 const isScheduleTriggered = ref(false);
 const scheduleStatusText = ref('');
 const scheduleRunState = ref({ date: '', runs: {} });
+let isApplyingRemoteSettings = false;
 
 const getDateKey = (date = new Date()) => {
   const year = date.getFullYear();
@@ -116,6 +117,13 @@ const getScheduleSignature = () => {
     evening: cfg.evening,
   });
 };
+
+const normalizeScheduleConfig = (config = {}) => ({
+  ...DEFAULT_SCHEDULE,
+  ...config,
+  morning: { ...DEFAULT_SCHEDULE.morning, ...(config.morning ?? {}) },
+  evening: { ...DEFAULT_SCHEDULE.evening, ...(config.evening ?? {}) },
+});
 
 const timeToMinutes = (time) => time.hour * 60 + time.minute;
 
@@ -168,7 +176,7 @@ const loadScheduleConfig = () => {
   if (saved) {
     try {
       const parsed = JSON.parse(saved);
-      scheduleConfig.value = { ...DEFAULT_SCHEDULE, ...parsed };
+      scheduleConfig.value = normalizeScheduleConfig(parsed);
     } catch (e) { /* ignore */ }
   }
 };
@@ -178,6 +186,9 @@ const saveScheduleConfig = () => {
   if (scheduleConfig.value.enabled) {
     computeTodaySchedule(true);
     findNextSchedule();
+  }
+  if (!isApplyingRemoteSettings) {
+    syncDakaSettingsToSupabase().catch(() => {});
   }
 };
 
@@ -554,6 +565,7 @@ const getAccountInfo = async (authToken) => {
     if (isRestRule) rule = t('messages.ruleRestLabel');
 
     return {
+      account_no: response1.data?.accountNo ?? '',
       nick_name: response1.data?.nickName ?? t('account.nicknameUnset'),
       phone: response1.data?.phone ?? t('account.phoneUnset'),
       team_name: response2.data?.orgName ?? t('account.noTeam'),
@@ -589,10 +601,11 @@ const test_token = async () => {
   const account = await getAccountInfo(token.value);
 
   if (account?.message === 'success') {
-    has_tested.value = true;
     account_info.value = account;
     localStorage.setItem('token', token.value);
     localStorage.setItem('token_time', new Date().getTime().toString());
+    await syncDakaSettingsFromSupabase(account.account_no);
+    has_tested.value = true;
 
     recordUserInfo({
       nick_name: account.nick_name,
@@ -825,6 +838,61 @@ const get_daka_config = () => {
   }
 };
 
+const getCustomDakaConfigFields = () => ({
+  address: daka_config.value.address,
+  location: daka_config.value.location,
+  longitude: daka_config.value.longitude,
+  latitude: daka_config.value.latitude,
+  wifi: daka_config.value.wifi,
+  wifi_mac: daka_config.value.wifi_mac,
+  randomOffset: daka_config.value.randomOffset,
+});
+
+const applyDakaSettings = (settings) => {
+  isApplyingRemoteSettings = true;
+  try {
+    if (settings?.schedule_config && Object.keys(settings.schedule_config).length) {
+      scheduleConfig.value = normalizeScheduleConfig(settings.schedule_config);
+      localStorage.setItem(SCHEDULE_KEY, JSON.stringify(scheduleConfig.value));
+      computeTodaySchedule(true);
+      ensureTodayRunState();
+      findNextSchedule();
+    }
+
+    if (settings?.daka_config && Object.keys(settings.daka_config).length) {
+      const customConfig = { ...settings.daka_config };
+      daka_config.value = { ...DEFAULT_DAKA_CONFIG, ...customConfig };
+      localStorage.setItem(CUSTOM_CONFIG_KEY, JSON.stringify(customConfig));
+    }
+  } finally {
+    isApplyingRemoteSettings = false;
+  }
+};
+
+const getCurrentDakaSettings = () => {
+  if (!daka_config.value) get_daka_config();
+  return {
+    schedule_config: scheduleConfig.value,
+    daka_config: getCustomDakaConfigFields(),
+  };
+};
+
+const syncDakaSettingsToSupabase = async () => {
+  const accountNo = account_info.value?.account_no;
+  if (!accountNo) return;
+  await saveDakaSettings(accountNo, getCurrentDakaSettings());
+};
+
+const syncDakaSettingsFromSupabase = async (accountNo) => {
+  if (!accountNo) return;
+  const result = await getDakaSettings(accountNo);
+  if (result.success && result.data) {
+    applyDakaSettings(result.data);
+    return;
+  }
+  await saveDakaSettings(accountNo, getCurrentDakaSettings());
+};
+
 const openEditDialog = () => {
   editForm.value = {
     address: daka_config.value.address,
@@ -867,16 +935,9 @@ const saveEditConfig = () => {
     wifi_mac: editForm.value.wifi_mac,
     randomOffset: Number(editForm.value.randomOffset),
   };
-  const customFields = {
-    address: daka_config.value.address,
-    location: daka_config.value.location,
-    longitude: daka_config.value.longitude,
-    latitude: daka_config.value.latitude,
-    wifi: daka_config.value.wifi,
-    wifi_mac: daka_config.value.wifi_mac,
-    randomOffset: daka_config.value.randomOffset,
-  };
+  const customFields = getCustomDakaConfigFields();
   localStorage.setItem(CUSTOM_CONFIG_KEY, JSON.stringify(customFields));
+  syncDakaSettingsToSupabase().catch(() => {});
   showEditDialog.value = false;
 };
 

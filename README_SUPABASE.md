@@ -28,6 +28,18 @@
    ) TABLESPACE pg_default;
    ```
 
+   自动打卡配置同步表：
+
+   ```sql
+   create table public.daka_settings (
+     account_no text not null,
+     schedule_config jsonb not null default '{}'::jsonb,
+     daka_config jsonb not null default '{}'::jsonb,
+     updated_at timestamp with time zone not null default now(),
+     constraint daka_settings_pkey primary key (account_no)
+   ) TABLESPACE pg_default;
+   ```
+
 3. **Supabase 权限配置**
    - 启用匿名用户登录：在 Supabase 项目设置 > Authentication > Settings 中启用 "Enable anonymous sign-ins"
    - 配置 RLS 策略：确保匿名用户可以向 user 表插入数据
@@ -37,6 +49,7 @@
    - 用户登录成功时会记录用户信息到数据库
    - 打卡成功、失败或异常时都会记录相应的状态
    - 自动获取用户IP地址和浏览器UA信息
+   - 登录成功后会使用海康 `accountNo` 从 `daka_settings` 同步自动打卡和地点配置
 
 5. **部署到 Vercel**
    - 在 Vercel 项目设置中添加环境变量 `VITE_SUPABASE_KEY`

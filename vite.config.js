@@ -12,14 +12,5 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
-  },
-  server: {
-    proxy: {
-      '/api/daka': {
-        target: 'https://dak2.littleking.site/api/daka',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/daka/, '')
-      }
-    }
   }
 })

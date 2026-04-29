@@ -84,6 +84,9 @@ const collapseSchedule = ref(true);
 /* ── Smart Schedule ── */
 const SCHEDULE_KEY = 'daka_schedule_config';
 const SCHEDULE_LOG_KEY = 'daka_schedule_log';
+const SCHEDULE_PLAN_KEY = 'daka_schedule_plan';
+const SCHEDULE_RUN_STATE_KEY = 'daka_schedule_run_state';
+const SCHEDULE_RUN_WINDOW_MINUTES = 10;
 const DEFAULT_SCHEDULE = {
   enabled: false,
   morning: { hour: 8, minute: 30, variance: 15 },   // 8:30 ±15min
@@ -97,6 +100,68 @@ const scheduleLog = ref([]);
 const nextScheduleTime = ref(null);
 const isScheduleTriggered = ref(false);
 const scheduleStatusText = ref('');
+const scheduleRunState = ref({ date: '', runs: {} });
+
+const getDateKey = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getScheduleSignature = () => {
+  const cfg = scheduleConfig.value;
+  return JSON.stringify({
+    morning: cfg.morning,
+    evening: cfg.evening,
+  });
+};
+
+const timeToMinutes = (time) => time.hour * 60 + time.minute;
+
+const formatScheduleTime = (time) =>
+  `${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`;
+
+const ensureTodayRunState = () => {
+  const today = getDateKey();
+  if (scheduleRunState.value.date !== today) {
+    scheduleRunState.value = { date: today, runs: {} };
+    localStorage.setItem(SCHEDULE_RUN_STATE_KEY, JSON.stringify(scheduleRunState.value));
+  }
+};
+
+const loadScheduleRunState = () => {
+  const saved = localStorage.getItem(SCHEDULE_RUN_STATE_KEY);
+  if (saved) {
+    try {
+      scheduleRunState.value = JSON.parse(saved);
+    } catch (e) {
+      scheduleRunState.value = { date: '', runs: {} };
+    }
+  }
+  ensureTodayRunState();
+};
+
+const hasScheduleRun = (shift) => {
+  ensureTodayRunState();
+  return !!scheduleRunState.value.runs?.[shift];
+};
+
+const markScheduleRun = (shift, status, message = '') => {
+  ensureTodayRunState();
+  scheduleRunState.value = {
+    ...scheduleRunState.value,
+    runs: {
+      ...scheduleRunState.value.runs,
+      [shift]: {
+        status,
+        message,
+        time: new Date().toISOString(),
+      },
+    },
+  };
+  localStorage.setItem(SCHEDULE_RUN_STATE_KEY, JSON.stringify(scheduleRunState.value));
+};
 
 const loadScheduleConfig = () => {
   const saved = localStorage.getItem(SCHEDULE_KEY);
@@ -111,7 +176,7 @@ const loadScheduleConfig = () => {
 const saveScheduleConfig = () => {
   localStorage.setItem(SCHEDULE_KEY, JSON.stringify(scheduleConfig.value));
   if (scheduleConfig.value.enabled) {
-    computeTodaySchedule();
+    computeTodaySchedule(true);
     findNextSchedule();
   }
 };
@@ -141,15 +206,32 @@ const generateRandomTime = (baseHour, baseMinute, varianceMinutes) => {
   return { hour: Math.floor(clamped / 60), minute: clamped % 60 };
 };
 
-// Compute today's scheduled times
 const todayScheduledTimes = ref({ morning: null, evening: null });
 
-const computeTodaySchedule = () => {
+// Compute today's scheduled times once per date and config.
+const computeTodaySchedule = (force = false) => {
+  const today = getDateKey();
+  const signature = getScheduleSignature();
+  if (!force) {
+    const saved = localStorage.getItem(SCHEDULE_PLAN_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed?.date === today && parsed?.signature === signature && parsed?.times) {
+          todayScheduledTimes.value = parsed.times;
+          return;
+        }
+      } catch (e) { /* ignore */ }
+    }
+  }
+
   const cfg = scheduleConfig.value;
-  todayScheduledTimes.value = {
+  const times = {
     morning: generateRandomTime(cfg.morning.hour, cfg.morning.minute, cfg.morning.variance),
     evening: generateRandomTime(cfg.evening.hour, cfg.evening.minute, cfg.evening.variance),
   };
+  todayScheduledTimes.value = times;
+  localStorage.setItem(SCHEDULE_PLAN_KEY, JSON.stringify({ date: today, signature, times }));
 };
 
 // Find the next upcoming scheduled time for today
@@ -163,6 +245,7 @@ const findNextSchedule = () => {
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const times = todayScheduledTimes.value;
 
+  ensureTodayRunState();
   const candidates = [];
   if (times.morning) {
     candidates.push({ ...times.morning, label: 'morning' });
@@ -171,11 +254,12 @@ const findNextSchedule = () => {
     candidates.push({ ...times.evening, label: 'evening' });
   }
 
-  for (const t of candidates) {
-    const tMinutes = t.hour * 60 + t.minute;
-    if (tMinutes > nowMinutes) {
+  for (const t of candidates.sort((a, b) => timeToMinutes(a) - timeToMinutes(b))) {
+    const tMinutes = timeToMinutes(t);
+    const isUpcomingOrRecoverable = tMinutes > nowMinutes || nowMinutes - tMinutes <= SCHEDULE_RUN_WINDOW_MINUTES;
+    if (isUpcomingOrRecoverable && !hasScheduleRun(t.label)) {
       nextScheduleTime.value = t;
-      scheduleStatusText.value = `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`;
+      scheduleStatusText.value = formatScheduleTime(t);
       return;
     }
   }
@@ -186,21 +270,20 @@ const findNextSchedule = () => {
 
 // Check if already checked in for a given shift
 const isAlreadyCheckedIn = (shift) => {
-  const details = today_status.value?.current?.details;
+  const details = [
+    ...(today_status.value?.current?.details ?? []),
+    ...(today_status.value?.others ?? []).flatMap(item => item?.details ?? []),
+  ];
   if (!details || !details.length) return false;
-  // Check if any status says "已打卡" or "正常"
+
   return details.some(d => {
     const desc = d.statusDesc || '';
-    const descLower = desc.toLowerCase();
-    if (desc.includes('已打卡') || desc.includes('正常')) return true;
-    // Match by shift type
-    if (shift === 'morning' && (descLower.includes('上班') || descLower.includes('签到'))) {
-      return desc.includes('已打卡') || desc.includes('正常');
-    }
-    if (shift === 'evening' && (descLower.includes('下班') || descLower.includes('签退'))) {
-      return desc.includes('已打卡') || desc.includes('正常');
-    }
-    return false;
+    const label = `${d.desc ?? ''} ${d.name ?? ''} ${d.clockName ?? ''}`;
+    const isDone = desc.includes('\u5df2\u6253\u5361') || desc.includes('\u6b63\u5e38');
+    if (!isDone) return false;
+    if (shift === 'morning') return label.includes('\u4e0a\u73ed') || label.includes('\u7b7e\u5230');
+    if (shift === 'evening') return label.includes('\u4e0b\u73ed') || label.includes('\u7b7e\u9000');
+    return isDone;
   });
 };
 
@@ -233,24 +316,45 @@ let scheduleTimer = null;
 const SCHEDULE_CHECK_INTERVAL = 30 * 1000; // Check every 30s
 
 const checkScheduleAndRun = async () => {
-  if (!scheduleConfig.value.enabled || !has_tested.value || isCheckingIn.value) return;
+  if (!scheduleConfig.value.enabled || !has_tested.value || isCheckingIn.value || isScheduleTriggered.value) return;
+  ensureTodayRunState();
   const now = new Date();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const times = todayScheduledTimes.value;
 
-  for (const [shift, t] of Object.entries(times)) {
-    if (!t) continue;
-    const tMinutes = t.hour * 60 + t.minute;
-    // Trigger if within the same minute window and not already triggered
-    if (tMinutes === nowMinutes && !isAlreadyCheckedIn(shift) && !isScheduleTriggered.value) {
-      isScheduleTriggered.value = true;
-      addScheduleLog({ type: 'triggered', shift, message: `${t('schedule.autoTrigger')}: ${shift}` });
+  const dueItems = Object.entries(times)
+    .filter(([, scheduledTime]) => !!scheduledTime)
+    .map(([shift, scheduledTime]) => ({
+      shift,
+      scheduledTime,
+      minutes: timeToMinutes(scheduledTime),
+    }))
+    .filter(({ shift, minutes }) => {
+      const minutesLate = nowMinutes - minutes;
+      return minutesLate >= 0 && minutesLate <= SCHEDULE_RUN_WINDOW_MINUTES && !hasScheduleRun(shift);
+    })
+    .sort((a, b) => a.minutes - b.minutes);
+
+  for (const { shift, scheduledTime } of dueItems) {
+    isScheduleTriggered.value = true;
+    try {
+      await get_today_status(true);
+      if (isAlreadyCheckedIn(shift)) {
+        markScheduleRun(shift, 'skipped', 'already checked in');
+        addScheduleLog({ type: 'skipped', shift, message: 'already checked in' });
+        findNextSchedule();
+        continue;
+      }
+
+      addScheduleLog({ type: 'triggered', shift, message: `${t('schedule.autoTrigger')}: ${shift} ${formatScheduleTime(scheduledTime)}` });
       const cfg = scheduleConfig.value;
-      await dakaWithRetry(cfg.retryMaxAttempts, cfg.retryBaseDelay, shift);
-      isScheduleTriggered.value = false;
+      const success = await dakaWithRetry(cfg.retryMaxAttempts, cfg.retryBaseDelay, shift);
+      markScheduleRun(shift, success ? 'success' : 'failed');
       findNextSchedule();
-      break;
+    } finally {
+      isScheduleTriggered.value = false;
     }
+    break;
   }
 };
 
@@ -258,7 +362,9 @@ const startScheduleTimer = () => {
   if (scheduleTimer) clearInterval(scheduleTimer);
   if (!scheduleConfig.value.enabled) return;
   computeTodaySchedule();
+  ensureTodayRunState();
   findNextSchedule();
+  checkScheduleAndRun();
   scheduleTimer = setInterval(checkScheduleAndRun, SCHEDULE_CHECK_INTERVAL);
 };
 
@@ -275,7 +381,6 @@ const toggleSchedule = () => {
   scheduleConfig.value.enabled = !scheduleConfig.value.enabled;
   saveScheduleConfig();
   if (scheduleConfig.value.enabled) {
-    computeTodaySchedule();
     startScheduleTimer();
   } else {
     stopScheduleTimer();
@@ -520,7 +625,7 @@ const login_with_sms = async () => {
   }
 };
 
-const get_today_status = async () => {
+const get_today_status = async (silent = false) => {
   try {
     const response = await axios.get(`${API_BASE}/api-attendance/mobile-clock/v1/require-commuting`, {
       headers: getHeaders(token.value),
@@ -532,10 +637,10 @@ const get_today_status = async () => {
       return true;
     }
 
-    Toast(response.data?.msg ?? t('messages.fetchStatusFailed'));
+    if (!silent) Toast(response.data?.msg ?? t('messages.fetchStatusFailed'));
     return false;
   } catch (error) {
-    Toast(t('messages.networkError'));
+    if (!silent) Toast(t('messages.networkError'));
     return false;
   }
 };
@@ -788,6 +893,7 @@ if (localStorage.getItem('sms_phone')) {
 get_daka_config();
 loadScheduleConfig();
 loadScheduleLog();
+loadScheduleRunState();
 computeTodaySchedule();
 
 if (localStorage.getItem('token')) {
@@ -804,6 +910,7 @@ const midnightCheck = setInterval(() => {
   const d = new Date();
   if (d.getHours() === 0 && d.getMinutes() === 0) {
     computeTodaySchedule();
+    ensureTodayRunState();
     findNextSchedule();
   }
 }, 60000);

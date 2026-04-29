@@ -75,6 +75,12 @@ let smsCooldownTimer = null;
 const isSendingCode = ref(false);
 const isSmsLoggingIn = ref(false);
 
+const runInBackground = (task, errorMessage) => {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => console.error(errorMessage, error));
+};
+
 const imgZoom = ref(false);
 const collapseUser = ref(true);
 const collapseLocation = ref(true);
@@ -730,7 +736,10 @@ const test_token = async () => {
     account_info.value = account;
     localStorage.setItem('token', token.value);
     localStorage.setItem('token_time', new Date().getTime().toString());
-    await syncDakaSettingsFromSupabase(account.account_no);
+    runInBackground(
+      () => syncDakaSettingsFromSupabase(account.account_no),
+      '后台同步 Supabase 打卡配置失败:',
+    );
     has_tested.value = true;
 
     recordUserInfo({
@@ -743,7 +752,10 @@ const test_token = async () => {
 
     overlay_visible.value = false;
     Toast({ duration: 2000, theme: 'success', direction: 'column', message: t('messages.loginSuccess') });
-    await get_today_status();
+    runInBackground(
+      () => get_today_status(true),
+      '后台获取今日状态失败:',
+    );
   } else {
     overlay_visible.value = false;
     Toast(t('messages.invalidToken'));
@@ -889,13 +901,16 @@ const daka = async (silent = false) => {
 
     if (response.data?.code === 0) {
       await get_today_status();
-      await recordUserInfo({
-        nick_name: account_info.value.nick_name,
-        name: account_info.value.name,
-        phone: account_info.value.phone,
-        team_name: account_info.value.team_name,
-        daka_result: 'daka_success',
-      });
+      runInBackground(
+        () => recordUserInfo({
+          nick_name: account_info.value.nick_name,
+          name: account_info.value.name,
+          phone: account_info.value.phone,
+          team_name: account_info.value.team_name,
+          daka_result: 'daka_success',
+        }),
+        '后台记录 Supabase 打卡成功日志失败:',
+      );
       if (!silent) {
         showSuccess.value = true;
         setTimeout(() => { showSuccess.value = false; }, 2300);
@@ -904,25 +919,31 @@ const daka = async (silent = false) => {
       return true;
     } else {
       const failMsg = response.data?.msg || t('messages.unknownError');
-      await recordUserInfo({
-        nick_name: account_info.value.nick_name,
-        name: account_info.value.name,
-        phone: account_info.value.phone,
-        team_name: account_info.value.team_name,
-        daka_result: `daka_failed: ${failMsg}`,
-      });
+      runInBackground(
+        () => recordUserInfo({
+          nick_name: account_info.value.nick_name,
+          name: account_info.value.name,
+          phone: account_info.value.phone,
+          team_name: account_info.value.team_name,
+          daka_result: `daka_failed: ${failMsg}`,
+        }),
+        '后台记录 Supabase 打卡失败日志失败:',
+      );
       if (!silent) Toast(response.data?.msg ?? t('messages.checkInFailed'));
       return false;
     }
   } catch (error) {
     const errMsg = error.message || t('messages.networkError');
-    await recordUserInfo({
-      nick_name: account_info.value.nick_name,
-      name: account_info.value.name,
-      phone: account_info.value.phone,
-      team_name: account_info.value.team_name,
-      daka_result: `daka_error: ${errMsg}`,
-    });
+    runInBackground(
+      () => recordUserInfo({
+        nick_name: account_info.value.nick_name,
+        name: account_info.value.name,
+        phone: account_info.value.phone,
+        team_name: account_info.value.team_name,
+        daka_result: `daka_error: ${errMsg}`,
+      }),
+      '后台记录 Supabase 打卡异常日志失败:',
+    );
     if (!silent) Toast(t('messages.networkError'));
     return false;
   } finally {

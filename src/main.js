@@ -8,12 +8,10 @@ import { initSupabaseAuth } from './utils/supabase';
 
 const app = createApp(App);
 
-const bootstrap = async () => {
-  try {
-    await initSupabaseAuth();
-  } catch (error) {
-    console.error('初始化 Supabase 匿名会话失败:', error);
-  }
+const bootstrap = () => {
+  initSupabaseAuth().catch((error) => {
+    console.error('后台初始化 Supabase 匿名会话失败:', error);
+  });
 
   app.use(TDesign);
   app.use(i18n);

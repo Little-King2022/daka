@@ -2,11 +2,5 @@
   "env": {
     "VITE_ENABLE_SUPABASE_LOG": "false",
     "VITE_ENABLE_TIME_RESTRICTION": "false"
-  },
-  "rewrites": [
-    {
-      "source": "/api/sms/:path*",
-      "destination": "https://hiklogin.littleking.site/api/:path*"
-    }
-  ]
+  }
 }

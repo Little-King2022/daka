@@ -19,11 +19,6 @@ export default defineConfig({
         target: 'https://dak2.littleking.site/api/daka',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/daka/, '')
-      },
-      '/api/sms': {
-        target: 'https://hiklogin.littleking.site/api',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/sms/, '')
       }
     }
   }

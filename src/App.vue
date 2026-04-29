@@ -10,7 +10,7 @@ import instructionImg from './assets/instruction.png';
 const { t } = useI18n();
 
 const API_BASE = 'https://api.hikiot.com';
-const SMS_API_BASE = import.meta.env.DEV ? '/api/sms' : '/api/sms';
+const SMS_API_BASE = 'https://hiklogin.littleking.site/api';
 const FIXED_SIGN_SALT = 'WE1mfER7artAoJEwXKaCjw==';
 const REST_KEYWORD = '休息';
 const CUSTOM_CONFIG_KEY = 'daka_config_custom';

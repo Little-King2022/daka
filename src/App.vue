@@ -101,7 +101,118 @@ const nextScheduleTime = ref(null);
 const isScheduleTriggered = ref(false);
 const scheduleStatusText = ref('');
 const scheduleRunState = ref({ date: '', runs: {} });
+const showScheduleGuide = ref(false);
+const deferredInstallPrompt = ref(null);
+const scheduleGuideChecks = ref({
+  autoStart: false,
+  performanceWhitelist: false,
+});
 let isApplyingRemoteSettings = false;
+
+const APP_DOMAIN = 'daka.littleking.site';
+const EDGE_PERFORMANCE_SETTINGS_URL = 'edge://settings/system/managePerformance';
+const CHROME_PERFORMANCE_SETTINGS_URL = 'chrome://settings/performance';
+
+const displayModeStandaloneMq = window.matchMedia('(display-mode: standalone)');
+const isStandalonePwa = ref(displayModeStandaloneMq.matches || window.navigator.standalone === true);
+const isDesktopDevice = ref(!(
+  window.navigator.userAgentData?.mobile ||
+  /Android|iPhone|iPad|iPod|Windows Phone|Mobile/i.test(window.navigator.userAgent || '') ||
+  (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1)
+));
+
+const canUseAutoSchedule = computed(() => isDesktopDevice.value && isStandalonePwa.value);
+const scheduleRuntimeEnabled = computed(() => scheduleConfig.value.enabled && canUseAutoSchedule.value);
+const scheduleBadgeText = computed(() => {
+  if (!scheduleConfig.value.enabled) return t('schedule.off');
+  return canUseAutoSchedule.value ? t('schedule.on') : t('schedule.unavailable');
+});
+const detectedBrowser = computed(() => {
+  const ua = window.navigator.userAgent || '';
+  if (ua.includes('Edg/')) return 'edge';
+  if (ua.includes('Chrome/')) return 'chrome';
+  return 'other';
+});
+const performanceSettingsUrl = computed(() =>
+  detectedBrowser.value === 'chrome' ? CHROME_PERFORMANCE_SETTINGS_URL : EDGE_PERFORMANCE_SETTINGS_URL,
+);
+const canFinishScheduleGuide = computed(() =>
+  canUseAutoSchedule.value &&
+  scheduleGuideChecks.value.autoStart &&
+  scheduleGuideChecks.value.performanceWhitelist,
+);
+
+const handleDisplayModeChange = (event) => {
+  isStandalonePwa.value = event.matches || window.navigator.standalone === true;
+};
+if (displayModeStandaloneMq.addEventListener) {
+  displayModeStandaloneMq.addEventListener('change', handleDisplayModeChange);
+} else if (displayModeStandaloneMq.addListener) {
+  displayModeStandaloneMq.addListener(handleDisplayModeChange);
+}
+
+const handleBeforeInstallPrompt = (event) => {
+  event.preventDefault();
+  deferredInstallPrompt.value = event;
+};
+window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+const openScheduleGuide = () => {
+  showScheduleGuide.value = true;
+};
+
+const closeScheduleGuide = () => {
+  showScheduleGuide.value = false;
+};
+
+const copyText = async (text) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    Toast(t('schedule.guide.copied'));
+  } catch (error) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    Toast(t('schedule.guide.copied'));
+  }
+};
+
+const installPwa = async () => {
+  if (!deferredInstallPrompt.value) {
+    Toast(t('schedule.guide.installUnavailable'));
+    return;
+  }
+  deferredInstallPrompt.value.prompt();
+  await deferredInstallPrompt.value.userChoice;
+  deferredInstallPrompt.value = null;
+};
+
+const openPerformanceSettings = () => {
+  copyText(performanceSettingsUrl.value);
+};
+
+const finishScheduleGuide = () => {
+  if (!canUseAutoSchedule.value) {
+    Toast(t('schedule.desktopPwaOnly'));
+    return;
+  }
+  if (!canFinishScheduleGuide.value) {
+    Toast(t('schedule.guide.completeChecklist'));
+    return;
+  }
+  showScheduleGuide.value = false;
+  if (!scheduleConfig.value.enabled) {
+    scheduleConfig.value.enabled = true;
+    saveScheduleConfig();
+  }
+  startScheduleTimer();
+};
 
 const getDateKey = (date = new Date()) => {
   const year = date.getFullYear();
@@ -183,9 +294,11 @@ const loadScheduleConfig = () => {
 
 const saveScheduleConfig = () => {
   localStorage.setItem(SCHEDULE_KEY, JSON.stringify(scheduleConfig.value));
-  if (scheduleConfig.value.enabled) {
+  if (scheduleRuntimeEnabled.value) {
     computeTodaySchedule(true);
     findNextSchedule();
+  } else {
+    stopScheduleTimer();
   }
   if (!isApplyingRemoteSettings) {
     syncDakaSettingsToSupabase().catch(() => {});
@@ -292,7 +405,7 @@ const computeTodaySchedule = (force = false) => {
 
 // Find the next upcoming scheduled time for today
 const findNextSchedule = () => {
-  if (!scheduleConfig.value.enabled) {
+  if (!scheduleRuntimeEnabled.value) {
     nextScheduleTime.value = null;
     scheduleStatusText.value = '';
     return;
@@ -375,7 +488,7 @@ let scheduleTimer = null;
 const SCHEDULE_CHECK_INTERVAL = 30 * 1000; // Check every 30s
 
 const checkScheduleAndRun = async () => {
-  if (!scheduleConfig.value.enabled || !has_tested.value || isCheckingIn.value || isScheduleTriggered.value) return;
+  if (!scheduleRuntimeEnabled.value || !has_tested.value || isCheckingIn.value || isScheduleTriggered.value) return;
   ensureTodayRunState();
   const now = new Date();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
@@ -423,8 +536,11 @@ const checkScheduleAndRun = async () => {
 };
 
 const startScheduleTimer = () => {
-  if (scheduleTimer) clearInterval(scheduleTimer);
-  if (!scheduleConfig.value.enabled) return;
+  if (scheduleTimer) {
+    clearInterval(scheduleTimer);
+    scheduleTimer = null;
+  }
+  if (!scheduleRuntimeEnabled.value) return;
   computeTodaySchedule();
   ensureTodayRunState();
   findNextSchedule();
@@ -442,9 +558,13 @@ const stopScheduleTimer = () => {
 };
 
 const toggleSchedule = () => {
+  if (!scheduleConfig.value.enabled && !canUseAutoSchedule.value) {
+    openScheduleGuide();
+    return;
+  }
   scheduleConfig.value.enabled = !scheduleConfig.value.enabled;
   saveScheduleConfig();
-  if (scheduleConfig.value.enabled) {
+  if (scheduleRuntimeEnabled.value) {
     startScheduleTimer();
   } else {
     stopScheduleTimer();
@@ -489,6 +609,12 @@ onBeforeUnmount(() => {
   if (smsCooldownTimer) clearInterval(smsCooldownTimer);
   if (clockTimer) clearInterval(clockTimer);
   prefersDarkMq.removeEventListener('change', handleSystemThemeChange);
+  if (displayModeStandaloneMq.removeEventListener) {
+    displayModeStandaloneMq.removeEventListener('change', handleDisplayModeChange);
+  } else if (displayModeStandaloneMq.removeListener) {
+    displayModeStandaloneMq.removeListener(handleDisplayModeChange);
+  }
+  window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 });
 
 const isTimeRestricted = computed(() => {
@@ -1031,8 +1157,16 @@ const midnightCheck = setInterval(() => {
 
 // Start schedule when user logs in
 watch(has_tested, (val) => {
-  if (val && scheduleConfig.value.enabled) {
+  if (val && scheduleRuntimeEnabled.value) {
     startScheduleTimer();
+  }
+});
+
+watch(canUseAutoSchedule, (canUse) => {
+  if (canUse && has_tested.value && scheduleConfig.value.enabled) {
+    startScheduleTimer();
+  } else {
+    stopScheduleTimer();
   }
 });
 </script>
@@ -1196,6 +1330,113 @@ watch(has_tested, (val) => {
       </div>
     </template>
 
+    <template v-else-if="showScheduleGuide">
+      <div class="screen guide-screen">
+        <div class="guide-top">
+          <button class="icon-btn" @click="closeScheduleGuide" :aria-label="t('actions.close')">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+          </button>
+          <button class="icon-btn" @click="toggleDark" :aria-label="isDark ? 'Light mode' : 'Dark mode'">
+            <svg v-if="isDark" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+        </div>
+
+        <section class="guide-hero">
+          <div class="guide-mark">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <div>
+            <h1>{{ t('schedule.guide.title') }}</h1>
+            <p>{{ t('schedule.guide.subtitle') }}</p>
+          </div>
+        </section>
+
+        <section class="guide-status-grid">
+          <div class="guide-status" :class="{ done: isDesktopDevice }">
+            <span class="guide-status-dot"></span>
+            <div>
+              <strong>{{ t('schedule.guide.desktopCheck') }}</strong>
+              <span>{{ isDesktopDevice ? t('schedule.guide.detected') : t('schedule.guide.notDetected') }}</span>
+            </div>
+          </div>
+          <div class="guide-status" :class="{ done: isStandalonePwa }">
+            <span class="guide-status-dot"></span>
+            <div>
+              <strong>{{ t('schedule.guide.pwaCheck') }}</strong>
+              <span>{{ isStandalonePwa ? t('schedule.guide.detected') : t('schedule.guide.notDetected') }}</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="guide-steps">
+          <div class="guide-step" :class="{ done: isDesktopDevice }">
+            <div class="guide-step-index">1</div>
+            <div class="guide-step-main">
+              <h2>{{ t('schedule.guide.stepDesktopTitle') }}</h2>
+              <p>{{ t('schedule.guide.stepDesktopText') }}</p>
+            </div>
+            <span class="guide-step-state">{{ isDesktopDevice ? t('schedule.guide.done') : t('schedule.guide.pending') }}</span>
+          </div>
+
+          <label class="guide-step guide-step-check" :class="{ done: scheduleGuideChecks.performanceWhitelist }">
+            <input type="checkbox" v-model="scheduleGuideChecks.performanceWhitelist" />
+            <div class="guide-step-index">2</div>
+            <div class="guide-step-main">
+              <h2>{{ t('schedule.guide.stepPerformanceTitle') }}</h2>
+              <p>{{ t('schedule.guide.stepPerformanceText', { domain: APP_DOMAIN }) }}</p>
+              <img src="/2.png" :alt="t('schedule.guide.stepPerformanceTitle')" class="guide-image" />
+              <div class="guide-command">
+                <code>{{ EDGE_PERFORMANCE_SETTINGS_URL }}</code>
+                <button @click.stop.prevent="copyText(EDGE_PERFORMANCE_SETTINGS_URL)">{{ t('schedule.guide.copy') }}</button>
+              </div>
+              <div class="guide-command">
+                <code>{{ CHROME_PERFORMANCE_SETTINGS_URL }}</code>
+                <button @click.stop.prevent="copyText(CHROME_PERFORMANCE_SETTINGS_URL)">{{ t('schedule.guide.copy') }}</button>
+              </div>
+              <div class="guide-actions">
+                <button class="btn-secondary guide-btn" @click.stop.prevent="openPerformanceSettings">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  {{ t('schedule.guide.openSettings') }}
+                </button>
+                <button class="btn-secondary guide-btn" @click.stop.prevent="copyText(APP_DOMAIN)">
+                  {{ t('schedule.guide.copyDomain') }}
+                </button>
+              </div>
+            </div>
+            <span class="guide-step-state">{{ scheduleGuideChecks.performanceWhitelist ? t('schedule.guide.done') : t('schedule.guide.confirm') }}</span>
+          </label>
+
+          <div class="guide-step" :class="{ done: isStandalonePwa }">
+            <div class="guide-step-index">3</div>
+            <div class="guide-step-main">
+              <h2>{{ t('schedule.guide.stepPwaTitle') }}</h2>
+              <p>{{ t('schedule.guide.stepPwaText') }}</p>
+              <img src="/3.png" :alt="t('schedule.guide.stepPwaTitle')" class="guide-image" />
+              <div class="guide-actions">
+                <button class="btn-secondary guide-btn" @click="installPwa">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  {{ t('schedule.guide.installAction') }}
+                </button>
+              </div>
+            </div>
+            <span class="guide-step-state">{{ isStandalonePwa ? t('schedule.guide.done') : t('schedule.guide.pending') }}</span>
+          </div>
+
+          <label class="guide-step guide-step-check" :class="{ done: scheduleGuideChecks.autoStart }">
+            <input type="checkbox" v-model="scheduleGuideChecks.autoStart" />
+            <div class="guide-step-index">4</div>
+            <div class="guide-step-main">
+              <h2>{{ t('schedule.guide.stepAutoStartTitle') }}</h2>
+              <p>{{ t('schedule.guide.stepAutoStartText') }}</p>
+              <img src="/4.png" :alt="t('schedule.guide.stepAutoStartTitle')" class="guide-image" />
+            </div>
+            <span class="guide-step-state">{{ scheduleGuideChecks.autoStart ? t('schedule.guide.done') : t('schedule.guide.confirm') }}</span>
+          </label>
+        </section>
+      </div>
+    </template>
+
     <!-- ─── DASHBOARD ─── -->
     <template v-else>
       <div class="screen dashboard-screen">
@@ -1235,7 +1476,7 @@ watch(has_tested, (val) => {
         <!-- Today status -->
         <div v-if="!account_info.is_rest_rule" class="section fade-up delay-1">
           <!-- Schedule status banner -->
-          <div v-if="scheduleConfig.enabled && scheduleStatusText" class="schedule-banner fade-up">
+          <div v-if="scheduleRuntimeEnabled && scheduleStatusText" class="schedule-banner fade-up">
             <div class="schedule-banner-icon">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             </div>
@@ -1355,8 +1596,8 @@ watch(has_tested, (val) => {
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
               </div>
               <span class="coll-title">{{ t('schedule.title') }}</span>
-              <span class="schedule-badge" :class="{ on: scheduleConfig.enabled }">
-                {{ scheduleConfig.enabled ? t('schedule.on') : t('schedule.off') }}
+              <span class="schedule-badge" :class="{ on: scheduleRuntimeEnabled, unavailable: scheduleConfig.enabled && !canUseAutoSchedule }">
+                {{ scheduleBadgeText }}
               </span>
               <span class="chev" :class="{ open: !collapseSchedule }">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
@@ -1369,13 +1610,19 @@ watch(has_tested, (val) => {
                   <span>{{ t('schedule.autoCheckIn') }}</span>
                   <button
                     class="switch"
-                    :class="{ on: scheduleConfig.enabled }"
+                    :class="{ on: scheduleConfig.enabled, unavailable: !canUseAutoSchedule }"
                     @click="toggleSchedule"
                     :aria-pressed="scheduleConfig.enabled"
+                    :title="!canUseAutoSchedule ? t('schedule.desktopPwaOnly') : ''"
                   >
                     <span class="thumb"></span>
                   </button>
                 </div>
+                <button v-if="!canUseAutoSchedule" class="schedule-warning" @click="openScheduleGuide">
+                  <span>{{ t('schedule.desktopPwaOnlyHint') }}</span>
+                  <strong>{{ t('schedule.guide.openGuide') }}</strong>
+                </button>
+                <template v-if="canUseAutoSchedule">
                 <!-- Morning time -->
                 <div class="info-row">
                   <span>{{ t('schedule.morning') }}</span>
@@ -1418,7 +1665,7 @@ watch(has_tested, (val) => {
                   <input type="number" class="time-input small" v-model.number="scheduleConfig.retryMaxAttempts" min="1" max="5" @change="saveScheduleConfig" />
                 </div>
                 <!-- Next schedule info -->
-                <div v-if="scheduleConfig.enabled && scheduleStatusText" class="info-row last schedule-next">
+                <div v-if="scheduleRuntimeEnabled && scheduleStatusText" class="info-row last schedule-next">
                   <span>{{ t('schedule.nextAt') }}</span>
                   <span class="schedule-time-highlight">{{ scheduleStatusText }}</span>
                 </div>
@@ -1434,6 +1681,7 @@ watch(has_tested, (val) => {
                     <span class="log-time">{{ formatScheduleLogTime(log.time) }}</span>
                   </div>
                 </div>
+                </template>
               </div>
             </div>
           </div>
@@ -2093,6 +2341,222 @@ body::-webkit-scrollbar,
   animation: checkmark 0.5s ease 0.3s both;
 }
 
+/* Schedule guide */
+.guide-screen {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 18px 20px 28px;
+  gap: 14px;
+}
+.guide-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 2px;
+}
+.guide-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 0 8px;
+  animation: fadeUp 0.35s ease both;
+}
+.guide-mark {
+  width: 58px;
+  height: 58px;
+  border-radius: 16px;
+  background: var(--green-50);
+  color: var(--green-600);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+[data-theme='dark'] .guide-mark {
+  background: oklch(0.25 0.06 155);
+  color: var(--green-400);
+}
+.guide-hero h1 {
+  margin: 0 0 5px;
+  font-size: 22px;
+  line-height: 1.2;
+  color: var(--text-primary);
+  letter-spacing: 0;
+}
+.guide-hero p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-tertiary);
+}
+.guide-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.guide-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+.guide-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #f97316;
+  flex-shrink: 0;
+}
+.guide-status.done .guide-status-dot { background: var(--green-500); }
+.guide-status strong,
+.guide-status span {
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.guide-status strong { color: var(--text-primary); }
+.guide-status span { color: var(--text-tertiary); }
+.guide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 2px;
+}
+.guide-step {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-sm);
+}
+.guide-step.done {
+  border-color: var(--green-200);
+  background: var(--green-50);
+}
+[data-theme='dark'] .guide-step.done {
+  border-color: var(--green-700);
+  background: oklch(0.22 0.035 155);
+}
+.guide-step-check {
+  cursor: pointer;
+}
+.guide-step-check > input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.guide-step-index {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+.guide-step.done .guide-step-index {
+  background: var(--green-500);
+  color: white;
+}
+.guide-step-main h2 {
+  margin: 0 0 5px;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--text-primary);
+  letter-spacing: 0;
+}
+.guide-step-main p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-tertiary);
+}
+.guide-image {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+.guide-step-state {
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.guide-step.done .guide-step-state {
+  background: var(--green-100);
+  color: var(--green-600);
+}
+[data-theme='dark'] .guide-step.done .guide-step-state {
+  background: var(--green-700);
+  color: var(--green-200);
+}
+.guide-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.guide-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 11px;
+  font-size: 12px;
+}
+.guide-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 8px;
+}
+.guide-command code {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.guide-command button {
+  border: none;
+  background: var(--green-50);
+  color: var(--green-600);
+  border-radius: 7px;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+[data-theme='dark'] .guide-command button {
+  background: oklch(0.25 0.06 155);
+  color: var(--green-400);
+}
 /* Schedule banner */
 .schedule-banner {
   display: flex; align-items: center; gap: 10px;
@@ -2122,7 +2586,41 @@ body::-webkit-scrollbar,
   border-radius: 6px; background: var(--bg-input); color: var(--text-tertiary);
 }
 .schedule-badge.on { background: var(--green-50); color: var(--green-600); }
+.schedule-badge.unavailable { background: #fff7ed; color: #c2410c; }
 [data-theme='dark'] .schedule-badge.on { background: oklch(0.25 0.06 155); color: var(--green-400); }
+[data-theme='dark'] .schedule-badge.unavailable { background: oklch(0.25 0.06 60); color: oklch(0.7 0.12 60); }
+
+.schedule-warning {
+  width: 100%;
+  border: 1px solid #fed7aa;
+  margin: 8px 0 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+[data-theme='dark'] .schedule-warning {
+  background: oklch(0.25 0.06 60);
+  color: oklch(0.75 0.12 60);
+  border-color: oklch(0.35 0.08 60);
+}
+.schedule-warning strong {
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.switch.unavailable:not(.on) {
+  opacity: 0.55;
+}
 
 /* Time input */
 .time-input-group {
@@ -2174,4 +2672,16 @@ body::-webkit-scrollbar,
 [data-theme='dark'] .log-type.triggered { background: oklch(0.25 0.06 260); color: oklch(0.7 0.12 260); }
 .log-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-time { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+
+@media (max-width: 560px) {
+  .guide-screen { padding: 14px 16px 24px; }
+  .guide-status-grid { grid-template-columns: 1fr; }
+  .guide-step {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+  .guide-step-state {
+    grid-column: 2;
+    justify-self: flex-start;
+  }
+}
 </style>

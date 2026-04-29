@@ -2343,6 +2343,7 @@ body::-webkit-scrollbar,
 
 /* Schedule guide */
 .guide-screen {
+  width: 90%;
   max-width: 760px;
   margin: 0 auto;
   padding: 18px 20px 28px;

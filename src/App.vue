@@ -1174,7 +1174,7 @@ watch(canUseAutoSchedule, (canUse) => {
 <template>
   <t-overlay :visible="overlay_visible" />
 
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'guide-shell': showScheduleGuide }">
     <!-- ─── LOGIN SCREEN ─── -->
     <template v-if="!has_tested">
       <div class="screen login-screen">
@@ -1873,6 +1873,9 @@ body::-webkit-scrollbar,
 
 <style scoped>
 .app-shell { width: 100%; min-height: 100vh; }
+:global(#app:has(.guide-shell)) {
+  max-width: 90vw;
+}
 
 .screen { padding: 0 20px 32px; min-height: 100vh; display: flex; flex-direction: column; }
 .login-screen { padding: 0 24px 24px; }
@@ -2343,8 +2346,8 @@ body::-webkit-scrollbar,
 
 /* Schedule guide */
 .guide-screen {
-  width: 90%;
-  max-width: 760px;
+  width: 100%;
+  max-width: 960px;
   margin: 0 auto;
   padding: 18px 20px 28px;
   gap: 14px;

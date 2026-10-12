@@ -70,6 +70,11 @@ const editErrors = ref({});
 const loginMethod = ref('sms');
 const phone = ref('');
 const smsCode = ref('');
+const handleSmsCodeInput = (event) => {
+  const code = event.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+  event.target.value = code;
+  smsCode.value = code;
+};
 const smsCooldown = ref(0);
 let smsCooldownTimer = null;
 const isSendingCode = ref(false);
@@ -797,7 +802,7 @@ const send_sms_code = async () => {
 };
 
 const login_with_sms = async () => {
-  if (!phone.value || !smsCode.value) {
+  if (!phone.value || !/^[0-9]{6}$/.test(smsCode.value)) {
     Toast(t('smsLogin.fillRequired'));
     return;
   }
@@ -1135,7 +1140,7 @@ const statusKind = (statusDesc) => {
 };
 
 const loginDisabled = computed(() => {
-  if (loginMethod.value === 'sms') return !phone.value || !smsCode.value || isSmsLoggingIn.value;
+  if (loginMethod.value === 'sms') return !phone.value || !/^[0-9]{6}$/.test(smsCode.value) || isSmsLoggingIn.value;
   return token.value.length !== 36;
 });
 
@@ -1251,7 +1256,8 @@ watch(canUseAutoSchedule, (canUse) => {
               <label>{{ t('smsLogin.codePlaceholder') }}</label>
               <div class="input-wrap">
                 <input
-                  v-model="smsCode"
+                  :value="smsCode"
+                  @input="handleSmsCodeInput"
                   type="tel"
                   inputmode="numeric"
                   :placeholder="t('smsLogin.codePlaceholder')"
